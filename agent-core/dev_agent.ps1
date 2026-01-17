@@ -294,7 +294,11 @@ try {
       }
       break
     } elseif ($st.status -eq 'rejected') {
-      Write-Error "Entrada rechazada"
+      if ($st.rejection_message) {
+        Write-Error "Entrada rechazada: $($st.rejection_message)"
+      } else {
+        Write-Error "Entrada rechazada"
+      }
       break
     }
   }
