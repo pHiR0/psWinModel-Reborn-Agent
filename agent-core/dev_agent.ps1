@@ -229,6 +229,20 @@ try {
     Write-Host "Status: $($st.status)"
     if ($st.status -eq 'approved') {
       Write-Host "Aprobado: agent_id=$($st.agent_id)"
+      
+      # Save agent_id to config file for future use
+      $configPath = Join-Path $OutDir "config.json"
+      $config = @{
+        agent_id = $st.agent_id
+        hostname = $Hostname
+        server_url = $ServerUrl
+        approved_at = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        private_key_path = $privPath
+        public_key_path = $pubPath
+      }
+      $config | ConvertTo-Json -Depth 5 | Out-File -FilePath $configPath -Encoding utf8 -Force
+      Write-Host "Configuración guardada en: $configPath"
+      
       # fetch agent details if available
       try {
         $agent = Invoke-RestMethod -Uri "$ServerUrl/api/agents/$($st.agent_id)" -Method Get -ErrorAction Stop
