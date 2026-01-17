@@ -200,7 +200,8 @@ function Get-QueueStatus([string]$serverUrl, [int]$id) {
   }
 }
 
-# main
+# main limpio: reutiliza config.json, genera claves solo si faltan,
+# crea entrada en la cola cuando procede y hace polling hasta aprobación
 if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Path $OutDir -Force | Out-Null }
 
 if (-not (Check-ServerReachable $ServerUrl)) {
@@ -209,19 +210,61 @@ if (-not (Check-ServerReachable $ServerUrl)) {
 
 $privPath = Join-Path $OutDir "agent_private.pem"
 $pubPath = Join-Path $OutDir "agent_public.pem"
+$configPath = Join-Path $OutDir "config.json"
 
-Write-Host "Generando par de claves RSA ($KeySize bits) en: $OutDir"
-$kp = New-RsaKeyPairPem -bits $KeySize -privatePath $privPath -publicPath $pubPath
+# Load existing config if present
+$existingConfig = $null
+if (Test-Path $configPath) {
+  try { $existingConfig = Get-Content -Raw -Path $configPath | ConvertFrom-Json } catch { $existingConfig = $null }
+}
 
-Write-Host "Public key guardada en: $($kp.public)"
+if ($existingConfig -and $existingConfig.agent_id) {
+  Write-Host "Ya existe agent_id en config.json: $($existingConfig.agent_id) - no se crea nueva entrada."
+  Write-Host "Ruta config: $configPath"
+  exit 0
+}
 
+# Ensure keys exist (generate only if missing)
+if (-not (Test-Path $pubPath) -or -not (Test-Path $privPath)) {
+  Write-Host "Generando par de claves RSA de $KeySize bits en: $OutDir"
+  $kp = New-RsaKeyPairPem -bits $KeySize -privatePath $privPath -publicPath $pubPath
+  Write-Host "Public key guardada en: $($kp.public)"
+} else {
+  Write-Host "Claves ya existentes encontradas en $OutDir"
+  $kp = @{ private = $privPath; public = $pubPath }
+}
+
+# If we have a previous queue_id in config, reuse it and poll; otherwise POST a new queue entry
+$qid = $null
+if ($existingConfig -and $existingConfig.queue_id) {
+  $qid = [int]$existingConfig.queue_id
+  Write-Host "Usando queue_id existente desde config.json: $qid"
+} else {
+  try {
+    $postRes = Post-Queue -serverUrl $ServerUrl -hostname $Hostname -publicKeyPath $kp.public
+    $qid = $postRes.id
+    if (-not $qid) { Write-Error "Respuesta inesperada del servidor: $($postRes | ConvertTo-Json -Depth 3)"; exit 2 }
+    Write-Host "Entrada creada en la cola con id: $qid"
+
+    # persist queue_id so subsequent runs reuse it
+    $cfg = @{
+      queue_id = $qid
+      hostname = $Hostname
+      server_url = $ServerUrl
+      public_key_path = $pubPath
+      private_key_path = $privPath
+      created_at = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+    }
+    $cfg | ConvertTo-Json -Depth 5 | Out-File -FilePath $configPath -Encoding utf8 -Force
+    Write-Host "Queue ID persistido en: $configPath"
+  } catch {
+    Write-Error "Error al crear la entrada en la cola: $_"
+    exit 1
+  }
+}
+
+Write-Host "Iniciando polling cada $PollIntervalSeconds segundos..."
 try {
-  $postRes = Post-Queue -serverUrl $ServerUrl -hostname $Hostname -publicKeyPath $kp.public
-  $qid = $postRes.id
-  if (-not $qid) { Write-Error "Respuesta inesperada del servidor: $($postRes | ConvertTo-Json -Depth 3)"; exit 2 }
-  Write-Host "Entrada creada en la cola con id: $qid"
-
-  Write-Host "Iniciando polling cada $PollIntervalSeconds segundos..."
   while ($true) {
     Start-Sleep -Seconds $PollIntervalSeconds
     $st = Get-QueueStatus -serverUrl $ServerUrl -id $qid
@@ -229,9 +272,8 @@ try {
     Write-Host "Status: $($st.status)"
     if ($st.status -eq 'approved') {
       Write-Host "Aprobado: agent_id=$($st.agent_id)"
-      
-      # Save agent_id to config file for future use
-      $configPath = Join-Path $OutDir "config.json"
+
+      # update config: set agent_id and remove queue_id
       $config = @{
         agent_id = $st.agent_id
         hostname = $Hostname
@@ -242,7 +284,7 @@ try {
       }
       $config | ConvertTo-Json -Depth 5 | Out-File -FilePath $configPath -Encoding utf8 -Force
       Write-Host "Configuración guardada en: $configPath"
-      
+
       # fetch agent details if available
       try {
         $agent = Invoke-RestMethod -Uri "$ServerUrl/api/agents/$($st.agent_id)" -Method Get -ErrorAction Stop
@@ -257,7 +299,7 @@ try {
     }
   }
 } catch {
-  Write-Error "Error durante el flujo: $_"
+  Write-Error "Error durante el polling: $_"
   exit 1
 }
 
