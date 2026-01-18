@@ -390,10 +390,44 @@ function Invoke-CheckStatus {
   Write-Host "Public Key: $script:PublicKeyPath $(if (Test-Path $script:PublicKeyPath) { '[OK]' } else { '[NO]' })"
   Write-Host "Private Key: $script:PrivateKeyPath $(if (Test-Path $script:PrivateKeyPath) { '[OK]' } else { '[NO]' })"
 
-  # Decide exit code: 0 = registered, 4 = pending approval, 0 also for present but no agent_id? Use pending for queue_id
+  # Decide exit code and try to enrich status with server-side info
   $agentId = if ($cfg.PSObject.Properties['agent_id']) { $cfg.agent_id } else { $null }
   $queueId = if ($cfg.PSObject.Properties['queue_id']) { $cfg.queue_id } else { $null }
+
   if ($agentId) {
+    # Try to fetch public summary for this agent (organization, location, groups)
+    try {
+      $pubUri = "$srvUrl/api/agents/public/$agentId"
+      $resp = Invoke-RestMethod -Uri $pubUri -Method Get -ErrorAction Stop
+      if ($resp -and $resp.agent) {
+        $ag = $resp.agent
+        Write-Host "`n=== Info del Agente (servidor) ===" -ForegroundColor Yellow
+        Write-Host "Nombre: $($ag.name)"
+        if ($ag.organization) { Write-Host "Organizacion: $($ag.organization)" }
+        if ($ag.location) { Write-Host "Localizacion: $($ag.location)" }
+        if ($ag.groups -and $ag.groups.Count -gt 0) {
+          $names = $ag.groups
+          Write-Host "Grupos: $([string]::Join(', ', $names))"
+        } else {
+          Write-Host "Grupos: (ninguno)"
+        }
+      }
+    } catch {
+      # If server returned 403, present a clear disabled message and exit
+      if ($_.Exception -and $_.Exception.Response) {
+        try {
+          $status = $_.Exception.Response.StatusCode.Value__
+        } catch {
+          $status = $null
+        }
+        if ($status -eq 403) {
+          Write-Err "El agente está deshabilitado en el servidor (403)."
+          exit 5
+        }
+      }
+      Write-Info "No se pudo obtener info adicional del servidor: $_"
+    }
+
     exit 0
   } elseif ($queueId) {
     exit 4
