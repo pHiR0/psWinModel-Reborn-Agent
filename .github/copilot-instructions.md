@@ -2,7 +2,7 @@
 - No ejecutes `ps2exe` ni builds de binarios sin indicación explícita; las compilaciones y firmas de binarios requieren revisión.
 - Antes de arrancar pruebas que contacten con el servidor, verifica que el servidor API (puerto 3000 por defecto) está accesible con `Test-NetConnection -ComputerName localhost -Port 3000`.
 - Debes tener siempre actualizado el comando "pswm.exe help" para ver las opciones disponibles. Con todos los nuevos comandos y parametros que se añadan, el comando de ayuda es la referencia definitiva.
-
+- Siempre se riguroso , metodico y meticuloso, y asegurate que lo que has hecho se ajusta a lo que te pido
 
 ### 🎯 Objetivo: Agente psWinModel Reborn
 Repositorio del agente: cliente en PowerShell que se instala como servicio (`pswm.exe`) y opcionalmente como `pswm-tray.exe` en sesión de usuario. Aquí se documentan comandos de desarrollo, flujos de onboarding (cola/OTP/admin) y prácticas de seguridad.
