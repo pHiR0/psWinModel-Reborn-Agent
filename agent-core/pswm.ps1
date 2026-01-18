@@ -8,6 +8,8 @@
     check_status    - Verificar conectividad y estado del agente
     view_config     - Mostrar configuración actual
     gencert         - Generar/regenerar par de claves RSA
+    archive_config  - Archivar config y claves en ZIP y eliminar originales (uso: archive_config "NAME")
+    restore_config  - Restaurar una configuración archivada (uso: restore_config "NAME")
     version         - Mostrar versión del agente
     help            - Mostrar ayuda
 
@@ -22,6 +24,8 @@ param(
   [string]$Command = "help",
   
   [string]$ServerUrl = $null,
+  [Parameter(Position=1)]
+  [string]$Arg1 = $null,
   [string]$OutDir = "$env:ProgramData\pswm-reborn",
   [int]$KeySize = 2048,
   [int]$PollIntervalSeconds = 5
@@ -265,7 +269,7 @@ function Invoke-RegInitCheck {
   
   if (-not (Test-ServerReachable $srvUrl)) {
     Write-Err "Servidor no accesible: $srvUrl"
-    exit 1
+    exit 2
   }
   Write-Success "Servidor accesible"
 
@@ -301,7 +305,7 @@ function Invoke-RegInitCheck {
       Write-Info "Queue ID guardado en config"
     } catch {
       Write-Err "Error al crear entrada en la cola: $_"
-      exit 1
+      exit 3
     }
   }
 
@@ -338,7 +342,7 @@ function Invoke-RegInitCheck {
       elseif ($st.status -eq 'rejected') {
         $msg = if ($st.rejection_message) { $st.rejection_message } else { "Sin mensaje" }
         Write-Err "Entrada rechazada: $msg"
-        exit 1
+        exit 4
       }
     }
   } catch {
@@ -354,7 +358,7 @@ function Invoke-CheckStatus {
   if (-not $cfg) {
     Write-Err "No se encontró archivo de configuración en: $script:ConfigPath"
     Write-Info "Ejecute 'pswm.exe reg_init_check' para registrar el agente"
-    exit 1
+    exit 3
   }
 
   Write-Host "`n=== Estado del Agente ===" -ForegroundColor Yellow
@@ -373,20 +377,29 @@ function Invoke-CheckStatus {
 
   $srvUrl = Get-ServerUrl
   Write-Host "Server URL: $srvUrl"
-  
+
   $reachable = Test-ServerReachable $srvUrl
-  if ($reachable) {
-    Write-Success "Servidor: Accesible"
-  } else {
+  if (-not $reachable) {
     Write-Err "Servidor: No accesible"
+    exit 2
   }
+  Write-Success "Servidor: Accesible"
 
   Write-Host "`n=== Archivos ===" -ForegroundColor Yellow
   Write-Host "Config: $script:ConfigPath $(if (Test-Path $script:ConfigPath) { '[OK]' } else { '[NO]' })"
   Write-Host "Public Key: $script:PublicKeyPath $(if (Test-Path $script:PublicKeyPath) { '[OK]' } else { '[NO]' })"
   Write-Host "Private Key: $script:PrivateKeyPath $(if (Test-Path $script:PrivateKeyPath) { '[OK]' } else { '[NO]' })"
-  
-  exit 0
+
+  # Decide exit code: 0 = registered, 4 = pending approval, 0 also for present but no agent_id? Use pending for queue_id
+  $agentId = if ($cfg.PSObject.Properties['agent_id']) { $cfg.agent_id } else { $null }
+  $queueId = if ($cfg.PSObject.Properties['queue_id']) { $cfg.queue_id } else { $null }
+  if ($agentId) {
+    exit 0
+  } elseif ($queueId) {
+    exit 4
+  } else {
+    exit 1
+  }
 }
 
 function Invoke-ViewConfig {
@@ -399,6 +412,94 @@ function Invoke-ViewConfig {
 
   Write-Host "`n=== $script:ConfigPath ===" -ForegroundColor Yellow
   Get-Content -Raw -Path $script:ConfigPath | Write-Host
+  exit 0
+}
+
+function Invoke-ArchiveConfig([string]$Name) {
+  Write-Info "Archiving local config to ZIP..."
+  if (-not $Name -or $Name.Trim().Length -eq 0) {
+    Write-Err "Nombre requerido: pswm.exe archive_config \"NAME\""
+    exit 1
+  }
+
+  if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Path $OutDir -Force | Out-Null }
+  $archiveDir = Join-Path $OutDir 'config_archive'
+  if (-not (Test-Path $archiveDir)) { New-Item -ItemType Directory -Path $archiveDir -Force | Out-Null }
+
+  # Sanitize name for filename
+  $invalid = [IO.Path]::GetInvalidFileNameChars() -join ''
+  $safeName = -join ($Name.ToCharArray() | ForEach-Object { if ($invalid -contains $_) { '_' } else { $_ } })
+  if (-not $safeName) { $safeName = "archive_$(Get-Date -Format 'yyyyMMdd-HHmmss')" }
+  $zipPath = Join-Path $archiveDir ($safeName + '.zip')
+
+  # Collect files from OutDir (top-level files)
+  $files = Get-ChildItem -Path $OutDir -File | Where-Object { $_.DirectoryName -eq (Get-Item $OutDir).FullName } | Select-Object -ExpandProperty FullName
+  if (-not $files -or $files.Count -eq 0) {
+    Write-Err "No se encontraron archivos en $OutDir para archivar"
+    exit 1
+  }
+
+  try {
+    if (Test-Path $zipPath) { Remove-Item -Path $zipPath -Force }
+    Compress-Archive -Path $files -DestinationPath $zipPath -Force
+    Write-Success "Archivado creado en: $zipPath"
+  } catch {
+    Write-Err "Error al crear el ZIP: $_"
+    exit 1
+  }
+
+  # Remove originals after successful archive
+  try {
+    foreach ($f in $files) { Remove-Item -Path $f -Force }
+    Write-Success "Archivos originales eliminados desde: $OutDir"
+  } catch {
+    Write-Err "Error al eliminar archivos originales: $_"
+    exit 1
+  }
+
+  exit 0
+}
+
+function Invoke-RestoreConfig([string]$Name) {
+  Write-Info "Restaurando configuración desde archivo..."
+  if (-not $Name -or $Name.Trim().Length -eq 0) {
+    Write-Err "Nombre requerido: pswm.exe restore_config \"NAME\""
+    exit 1
+  }
+
+  if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Path $OutDir -Force | Out-Null }
+  $archiveDir = Join-Path $OutDir 'config_archive'
+  if (-not (Test-Path $archiveDir)) {
+    Write-Err "No existe carpeta de archivos archivados: $archiveDir"
+    exit 1
+  }
+
+  # Ensure target dir has no config or keys
+  $confExists = Test-Path (Join-Path $OutDir 'config.json')
+  $pubExists = Test-Path (Join-Path $OutDir 'agent_public.pem')
+  $privExists = Test-Path (Join-Path $OutDir 'agent_private.pem')
+  if ($confExists -or $pubExists -or $privExists) {
+    Write-Err "Hay archivos de configuración o certificados existentes en $OutDir. Abortar restauración."
+    Write-Host "Archivos detectados: $(@(if ($confExists) { 'config.json' } else { }), (if ($pubExists) { 'agent_public.pem' } else { }), (if ($privExists) { 'agent_private.pem' } else { }) )" -ForegroundColor Yellow
+    exit 1
+  }
+
+  # Locate zip
+  $safeName = $Name
+  $zipPath = Join-Path $archiveDir ($safeName + '.zip')
+  if (-not (Test-Path $zipPath)) {
+    Write-Err "Archivo de backup no encontrado: $zipPath"
+    exit 1
+  }
+
+  try {
+    Expand-Archive -Path $zipPath -DestinationPath $OutDir -Force
+    Write-Success "Restauración completada: archivos extraídos a $OutDir"
+  } catch {
+    Write-Err "Error al extraer el ZIP: $_"
+    exit 1
+  }
+
   exit 0
 }
 
@@ -450,10 +551,15 @@ psWinModel Reborn Agent - CLI v$script:Version
 Uso: pswm.exe <comando> [opciones]
 
 Comandos disponibles:
-  reg_init_check   Registrar agente vía Cola de Aprobación
+  reg_init_check   Registrar agente vía Cola de Aprobación (genera claves si necesario)
   check_status     Verificar conectividad y estado del agente
-  view_config      Mostrar configuración actual
+  view_config      Mostrar configuración actual (config.json)
+  archive_config   Archivar config + claves a ZIP y eliminar originales
+  restore_config   Restaurar config desde ZIP (solo si no existen archivos locales)
   gencert          Generar/regenerar par de claves RSA
+  ping             Realizar un ping HTTP simple al servidor
+  facts            Mostrar facts locales (OS, usuario, hostname)
+  config set       Modificar valores básicos en config.json (ej: server_url)
   version          Mostrar versión del agente
   help             Mostrar esta ayuda
 
@@ -466,6 +572,8 @@ Opciones comunes:
 Ejemplos:
   pswm.exe reg_init_check
   pswm.exe reg_init_check -ServerUrl https://mi-servidor.com
+  pswm.exe archive_config "backup-20260117"
+  pswm.exe restore_config "backup-20260117"
   pswm.exe check_status
   pswm.exe view_config
   pswm.exe gencert -KeySize 4096
@@ -483,6 +591,8 @@ switch ($Command.ToLower()) {
   "reg_init_check" { Invoke-RegInitCheck }
   "check_status"   { Invoke-CheckStatus }
   "view_config"    { Invoke-ViewConfig }
+  "archive_config" { Invoke-ArchiveConfig -Name $Arg1 }
+  "restore_config" { Invoke-RestoreConfig -Name $Arg1 }
   "gencert"        { Invoke-GenCert }
   "version"        { Invoke-Version }
   "help"           { Invoke-Help }
