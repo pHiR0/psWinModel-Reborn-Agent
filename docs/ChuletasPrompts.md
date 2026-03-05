@@ -5,7 +5,7 @@ Este archivo inclue anotaciones y chuletillas para usar en el Chat. Este archivo
 He añadido nuevas tareas al ToDo.md vuelve a releerlo y hace lo que indica.
 
 ##
-A partir de ahora y hasta nuevo aviso estamos desarrollando en local, subas al git, ni despliegues en el LXC , salvo peticion expresa o hasta nuevo aviso.
+A partir de ahora y hasta nuevo aviso estamos desarrollando en local, subas al git, ni despliegues en el LXC , ni compiles pswm.exe, salvo peticion expresa o hasta nuevo aviso.
 
 ##
 

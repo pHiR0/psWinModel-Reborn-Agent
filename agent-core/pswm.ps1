@@ -1286,6 +1286,10 @@ function Invoke-CheckAndApplyUpdate([string]$serverUrl) {
   <#
   .SYNOPSIS
     Comprueba si hay una actualizacion disponible en el servidor y la aplica.
+    Soporta 3 modos del servidor:
+      - disabled: no hay actualizaciones
+      - upgrade: solo actualiza si la version del servidor es mayor
+      - mandatory: fuerza la version publicada aunque sea inferior (permite downgrade)
     Usa pswm_updater.exe para reemplazar pswm.exe y pswm_svc.exe.
   #>
   if (-not (Test-IsCompiled)) {
@@ -1306,12 +1310,24 @@ function Invoke-CheckAndApplyUpdate([string]$serverUrl) {
     return
   }
 
-  if (-not $checkRes.update_available) {
-    Write-Info "No hay actualizaciones disponibles"
+  # Verificar modo
+  $mode = if ($checkRes.mode) { $checkRes.mode } else { 'disabled' }
+  if ($mode -eq 'disabled') {
+    Write-Info "Actualizaciones desactivadas en el servidor"
     return
   }
 
-  Write-Info "Actualizacion disponible: v$($checkRes.version) (SHA256: $($checkRes.sha256.Substring(0, 16))...)"
+  if (-not $checkRes.update_available) {
+    Write-Info "No hay actualizaciones disponibles (modo: $mode)"
+    return
+  }
+
+  $serverVersion = $checkRes.version
+  if ($mode -eq 'upgrade') {
+    Write-Info "Actualizacion disponible (modo upgrade): v$serverVersion"
+  } elseif ($mode -eq 'mandatory') {
+    Write-Info "Actualizacion forzada (modo mandatory): v$serverVersion"
+  }
 
   # Descargar el binario
   $tempDir = Join-Path $OutDir 'update_temp'
@@ -1951,6 +1967,10 @@ Comandos disponibles:
   uninstall_service   Desinstalar servicio Windows del agente
   svc                 Bucle de servicio (uso interno, ejecutado por el servicio)
   iterate             Ciclo operativo: recopila facts, ejecuta scripts/choco pendientes, sincroniza, check update
+                      El servidor controla el modo de actualizacion:
+                        - disabled: no se proporcionan actualizaciones
+                        - upgrade: solo actualiza si la version del servidor es mayor
+                        - mandatory: fuerza la version publicada (permite downgrade)
   dummy_iterate       Escribe fecha, params, PID y usuario en ProgramData\pswm-reborn\test.txt
   apply_update        Aplicar actualizacion (uso interno, ejecutado por pswm_updater.exe)
   gui                 Abre la interfaz grafica (instalacion o gestion del servicio)
