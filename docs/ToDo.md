@@ -79,3 +79,8 @@ Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas m
     OK
 + Además cuando  salgo de la edición del script powershell y vuelvo a entrar sigue estando el texto
 + En los despliegues de tipo location cuando los editamos, quiero que muestres las localizaciones y ubicaciones asignada complemtas igual que la muestras la ubicacion cuando editas un agente ejemplo -> "🏢 pHiSoft  >  Casa"
+
++ En la webconsole estas mostrando como "Version Agente" = 0.1.0-mvp y fijate que cuando compilamos usamos esto para asignar la version al ejectutable --> "version = (Get-Date -Format 'yyyy.MM.dd.HHmmss')" esta es la version real del agente, la 0.1.0-mvp es unicamente si pswm se ejecuta como script pswm.ps1, repito si es como ejecutable , la version del fileinfo del pswm.exe.
++ Sigues mostrando Exit Code 0 en la ejecuciones de escript cuando es una ejecución que ha fallado y tiene stderr
++ Luego he verificado la sintaxis de este script "(get-date).ToString() | c:\testDate.txt" y me sale Sintaxis válida , lo he puesto mal a proposito
+> NOTA: Este comportamiento es CORRECTO. El analizador de PowerShell considera válida esa sintaxis porque piping a una ruta (c:\testDate.txt como comando) es sintácticamente legal en PS. El error ocurre en tiempo de ejecución, no de compilación. Se ha mejorado el mensaje en la UI para aclarar que "Sintáxis válida" no implica que no haya errores de ejecución.

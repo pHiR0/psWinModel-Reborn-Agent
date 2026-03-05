@@ -998,15 +998,21 @@ function Collect-Facts {
   } catch { }
 
   # --- Version del agente ---
+  # Si estamos corriendo como binario compilado (.exe), leer FileVersion del propio ejecutable;
+  # esa version la asigna build.ps1 con (Get-Date -Format 'yyyy.MM.dd.HHmmss').
+  # Si corremos como script .ps1, usar la constante $script:Version.
   $agentVer = $script:Version
-  try {
-    $exePath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
-    # Solo usar FileVersion si estamos corriendo como binario compilado (pswm.exe), no como script PS
-    if ($exePath -match '[/\\]pswm(\.exe)?$') {
+  if (Test-IsCompiled) {
+    try {
+      $exePath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
       $fvi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exePath)
-      if ($fvi -and $fvi.FileVersion) { $agentVer = $fvi.FileVersion }
-    }
-  } catch { }
+      # FileVersion primero; si viene vacío probar ProductVersion
+      $ver = if ($fvi -and $fvi.FileVersion -and $fvi.FileVersion.Trim()) { $fvi.FileVersion.Trim() }`
+              elseif ($fvi -and $fvi.ProductVersion -and $fvi.ProductVersion.Trim()) { $fvi.ProductVersion.Trim() }`
+              else { $null }
+      if ($ver) { $agentVer = $ver }
+    } catch { }
+  }
   $facts += @{ fact_key = 'agent_version'; value = $agentVer; source = 'agent' }
 
   # --- External facts (scripts .ps1 en external_facts/) ---
@@ -1046,7 +1052,7 @@ function Get-PendingDeployments([string]$serverUrl, [int]$agentId) {
   $uri = "$serverUrl/api/deployments/agent/$agentId"
   try {
     $res = Invoke-RestMethod -Uri $uri -Method Get -ErrorAction Stop
-    return $res.deployments
+    return @($res.deployments)  # @() garantiza array aunque solo haya 1 elemento
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Err "Error obteniendo despliegues: $_"
@@ -1132,7 +1138,7 @@ function Get-PendingChocoDeployments([string]$serverUrl, [int]$agentId) {
   $uri = "$serverUrl/api/choco/deployments/agent/$agentId"
   try {
     $res = Invoke-RestMethod -Uri $uri -Method Get -ErrorAction Stop
-    return $res.deployments
+    return @($res.deployments)  # @() garantiza array aunque solo haya 1 elemento
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Err "Error obteniendo choco deployments: $_"
@@ -1300,7 +1306,7 @@ function Invoke-Iterate {
   # ---- PASO 2: Scripts pendientes ----
   Write-Info "Paso 2/4: Consultando scripts pendientes..."
   try {
-    $deployments = Get-PendingDeployments -serverUrl $srvUrl -agentId $agentId
+    $deployments = @(Get-PendingDeployments -serverUrl $srvUrl -agentId $agentId)
     if ($deployments -and $deployments.Count -gt 0) {
       Write-Info "$($deployments.Count) despliegue(s) de scripts encontrados"
       foreach ($dep in $deployments) {
@@ -1326,7 +1332,7 @@ function Invoke-Iterate {
   # ---- PASO 3: Chocolatey deployments ----
   Write-Info "Paso 3/4: Consultando choco deployments..."
   try {
-    $chocoDeployments = Get-PendingChocoDeployments -serverUrl $srvUrl -agentId $agentId
+    $chocoDeployments = @(Get-PendingChocoDeployments -serverUrl $srvUrl -agentId $agentId)
     if ($chocoDeployments -and $chocoDeployments.Count -gt 0) {
       Write-Info "$($chocoDeployments.Count) choco deployment(s) encontrados"
       foreach ($cd in $chocoDeployments) {
