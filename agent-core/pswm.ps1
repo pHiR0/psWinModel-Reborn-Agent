@@ -1060,7 +1060,7 @@ function Get-PendingDeployments([string]$serverUrl, [int]$agentId) {
   }
 }
 
-function Execute-Script([hashtable]$deployment, [string]$serverUrl, [int]$agentId) {
+function Execute-Script([hashtable]$deployment, [string]$serverUrl, [int]$agentId, [string]$iterationId = '') {
   <# Ejecuta un script de un deployment y reporta el resultado directamente al servidor. #>
   $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
 
@@ -1103,7 +1103,8 @@ function Execute-Script([hashtable]$deployment, [string]$serverUrl, [int]$agentI
   Send-ScriptRun -serverUrl $serverUrl -agentId $agentId `
     -deploymentId $deployment.id -scriptId $deployment.script_id `
     -startedAt $startedAt -finishedAt $finishedAt `
-    -exitCode $exitCodeVal -stdoutText $stdoutVal -stderrText $stderrVal -errorText $errorMsg
+    -exitCode $exitCodeVal -stdoutText $stdoutVal -stderrText $stderrVal -errorText $errorMsg `
+    -iterationId $iterationId
 
   return $exitCodeVal
 }
@@ -1112,7 +1113,8 @@ function Send-ScriptRun(
   [string]$serverUrl, [int]$agentId,
   $deploymentId, $scriptId,
   [string]$startedAt, [string]$finishedAt,
-  $exitCode, [string]$stdoutText, [string]$stderrText, [string]$errorText
+  $exitCode, [string]$stdoutText, [string]$stderrText, [string]$errorText,
+  [string]$iterationId = ''
 ) {
   $body = ConvertTo-Json -Depth 3 -Compress @{
     deployment_id = $deploymentId
@@ -1124,6 +1126,7 @@ function Send-ScriptRun(
     stdout        = $stdoutText
     stderr        = $stderrText
     error         = $errorText
+    iteration_id  = $iterationId
   }
   $uri = "$serverUrl/api/deployments/runs"
   try {
@@ -1264,12 +1267,263 @@ function Sync-ChocoInventory([string]$serverUrl, [int]$agentId) {
   }
 }
 
+#region Update Functions
+
+function Get-AgentVersion {
+  <# Obtiene la version del ejecutable actual (FileVersion). Si es script, retorna $script:Version #>
+  if (Test-IsCompiled) {
+    try {
+      $exePath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+      $fi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exePath)
+      if ($fi.FileVersion) { return $fi.FileVersion }
+      if ($fi.ProductVersion) { return $fi.ProductVersion }
+    } catch { }
+  }
+  return $script:Version
+}
+
+function Invoke-CheckAndApplyUpdate([string]$serverUrl) {
+  <#
+  .SYNOPSIS
+    Comprueba si hay una actualizacion disponible en el servidor y la aplica.
+    Usa pswm_updater.exe para reemplazar pswm.exe y pswm_svc.exe.
+  #>
+  if (-not (Test-IsCompiled)) {
+    Write-Info "Update check omitido (modo script, no compilado)"
+    return
+  }
+
+  $currentVersion = Get-AgentVersion
+  Write-Info "Version actual: $currentVersion"
+
+  # Consultar al servidor
+  $uri = "$serverUrl/api/updates/check?current_version=$([System.Uri]::EscapeDataString($currentVersion))"
+  try {
+    $checkRes = Invoke-RestMethod -Uri $uri -Method Get -ErrorAction Stop
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "No se pudo comprobar actualizaciones: $_"
+    return
+  }
+
+  if (-not $checkRes.update_available) {
+    Write-Info "No hay actualizaciones disponibles"
+    return
+  }
+
+  Write-Info "Actualizacion disponible: v$($checkRes.version) (SHA256: $($checkRes.sha256.Substring(0, 16))...)"
+
+  # Descargar el binario
+  $tempDir = Join-Path $OutDir 'update_temp'
+  if (-not (Test-Path $tempDir)) { $null = New-Item -ItemType Directory -Path $tempDir -Force }
+  $tempFile = Join-Path $tempDir 'pswm_update.exe'
+
+  Write-Info "Descargando actualizacion..."
+  $downloadUri = "$serverUrl/api/updates/download"
+  try {
+    Invoke-WebRequest -Uri $downloadUri -OutFile $tempFile -ErrorAction Stop
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Err "Error descargando actualizacion: $_"
+    return
+  }
+
+  # Verificar SHA256
+  $hash = (Get-FileHash -Path $tempFile -Algorithm SHA256).Hash.ToLower()
+  $expectedHash = $checkRes.sha256.ToLower()
+  if ($hash -ne $expectedHash) {
+    Write-Err "SHA256 no coincide! Esperado: $expectedHash, Obtenido: $hash"
+    Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+    return
+  }
+  Write-Success "SHA256 verificado correctamente"
+
+  # Invocar pswm_updater.exe para reemplazar pswm.exe y pswm_svc.exe
+  $myDir = Split-Path -Parent ([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
+  $updaterExe = Join-Path $myDir 'pswm_updater.exe'
+
+  if (-not (Test-Path $updaterExe)) {
+    Write-Err "pswm_updater.exe no encontrado en: $myDir"
+    # Fallback: intentar copiar directamente si no hay servicio bloqueando
+    try {
+      $destPswm = Join-Path $myDir 'pswm.exe'
+      Copy-Item -Path $tempFile -Destination $destPswm -Force
+      Write-Success "pswm.exe actualizado directamente (sin updater)"
+      $destSvc = Join-Path $myDir 'pswm_svc.exe'
+      Copy-Item -Path $tempFile -Destination $destSvc -Force
+      Write-Success "pswm_svc.exe actualizado directamente (sin updater)"
+    } catch {
+      Write-Err "Error actualizando directamente: $_"
+    }
+    Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+    return
+  }
+
+  # Lanzar updater como proceso independiente:
+  # pswm_updater.exe apply_update -Arg1 "<tempFile>"
+  # El updater copiara el tempFile sobre pswm.exe y pswm_svc.exe
+  Write-Info "Lanzando pswm_updater.exe para aplicar la actualizacion..."
+  try {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = $updaterExe
+    $psi.Arguments = "apply_update `"$tempFile`""
+    $psi.UseShellExecute = $true
+    $psi.CreateNoWindow = $true
+    $psi.WindowStyle = 'Hidden'
+    [System.Diagnostics.Process]::Start($psi) | Out-Null
+    Write-Success "Updater lanzado. La actualizacion se aplicara en breve."
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Err "Error lanzando updater: $_"
+  }
+}
+
+function Invoke-ApplyUpdate {
+  <#
+  .SYNOPSIS
+    Comando apply_update: ejecutado por pswm_updater.exe para reemplazar pswm.exe y pswm_svc.exe.
+    Uso: pswm_updater.exe apply_update "<ruta_al_nuevo_exe>"
+  #>
+  $sourceFile = $Arg1
+  if (-not $sourceFile -or -not (Test-Path $sourceFile)) {
+    Write-Err "Archivo de actualizacion no encontrado: $sourceFile"
+    Exit-Cmd 1
+  }
+
+  $myDir = Split-Path -Parent ([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
+  $destPswm = Join-Path $myDir 'pswm.exe'
+  $destSvc = Join-Path $myDir 'pswm_svc.exe'
+
+  # Esperar un momento para que el proceso que nos lanzo termine
+  Start-Sleep -Seconds 3
+
+  $success = $true
+
+  # Reemplazar pswm.exe
+  try {
+    # Primero intentar renombrar el antiguo como backup
+    $backupPswm = Join-Path $myDir 'pswm.exe.bak'
+    if (Test-Path $destPswm) {
+      try { Move-Item -Path $destPswm -Destination $backupPswm -Force } catch {
+        Write-Info "No se pudo crear backup de pswm.exe: $_ (intentando sobrescribir)"
+      }
+    }
+    Copy-Item -Path $sourceFile -Destination $destPswm -Force
+    Write-Success "pswm.exe actualizado"
+    # Limpiar backup si exito
+    if (Test-Path $backupPswm) { Remove-Item $backupPswm -Force -ErrorAction SilentlyContinue }
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Err "Error actualizando pswm.exe: $_"
+    $success = $false
+    # Intentar rollback
+    $backupPswm = Join-Path $myDir 'pswm.exe.bak'
+    if (Test-Path $backupPswm) {
+      try { Move-Item -Path $backupPswm -Destination $destPswm -Force; Write-Info "Rollback pswm.exe completado" } catch { }
+    }
+  }
+
+  # Reemplazar pswm_svc.exe (puede estar bloqueado por el servicio)
+  try {
+    $backupSvc = Join-Path $myDir 'pswm_svc.exe.bak'
+    if (Test-Path $destSvc) {
+      try { Move-Item -Path $destSvc -Destination $backupSvc -Force } catch {
+        Write-Info "No se pudo crear backup de pswm_svc.exe: $_ (intentando sobrescribir)"
+      }
+    }
+    Copy-Item -Path $sourceFile -Destination $destSvc -Force
+    Write-Success "pswm_svc.exe actualizado"
+    if (Test-Path $backupSvc) { Remove-Item $backupSvc -Force -ErrorAction SilentlyContinue }
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Err "Error actualizando pswm_svc.exe: $_"
+    $success = $false
+    $backupSvc = Join-Path $myDir 'pswm_svc.exe.bak'
+    if (Test-Path $backupSvc) {
+      try { Move-Item -Path $backupSvc -Destination $destSvc -Force; Write-Info "Rollback pswm_svc.exe completado" } catch { }
+    }
+  }
+
+  # Limpiar archivo temporal
+  Remove-Item $sourceFile -Force -ErrorAction SilentlyContinue
+
+  if ($success) {
+    Write-Success "=== Actualizacion aplicada correctamente ==="
+    # Registrar en log
+    $logDir = Join-Path $env:ProgramData 'pswm-reborn' 'logs'
+    if (-not (Test-Path $logDir)) { $null = New-Item -ItemType Directory -Path $logDir -Force }
+    $logFile = Join-Path $logDir 'update.log'
+    $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
+    "$ts UPDATE APPLIED - pswm.exe and pswm_svc.exe replaced" | Out-File -FilePath $logFile -Append -Encoding utf8
+  } else {
+    Write-Err "=== Actualizacion parcial o fallida ==="
+  }
+
+  Exit-Cmd $(if ($success) { 0 } else { 1 })
+}
+
+function Sync-UpdaterBinary {
+  <#
+  .SYNOPSIS
+    Tras una iteracion limpia, compara la version de pswm.exe con pswm_updater.exe.
+    Si difieren, elimina el antiguo updater y crea una copia de pswm.exe.
+  #>
+  if (-not (Test-IsCompiled)) { return }
+
+  $myDir = Split-Path -Parent ([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
+  $pswmExe = Join-Path $myDir 'pswm.exe'
+  $updaterExe = Join-Path $myDir 'pswm_updater.exe'
+
+  if (-not (Test-Path $pswmExe)) { return }
+
+  $pswmVersion = ''
+  $updaterVersion = ''
+
+  try {
+    $fi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($pswmExe)
+    $pswmVersion = if ($fi.FileVersion) { $fi.FileVersion } else { '' }
+  } catch { }
+
+  if (Test-Path $updaterExe) {
+    try {
+      $fi2 = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($updaterExe)
+      $updaterVersion = if ($fi2.FileVersion) { $fi2.FileVersion } else { '' }
+    } catch { }
+  }
+
+  if ($pswmVersion -eq $updaterVersion -and $pswmVersion -ne '') {
+    Write-Info "pswm_updater.exe ya esta sincronizado (v$pswmVersion)"
+    return
+  }
+
+  Write-Info "Sincronizando pswm_updater.exe: pswm=$pswmVersion updater=$updaterVersion"
+  try {
+    if (Test-Path $updaterExe) {
+      Remove-Item $updaterExe -Force
+    }
+    Copy-Item -Path $pswmExe -Destination $updaterExe -Force
+    Write-Success "pswm_updater.exe sincronizado a v$pswmVersion"
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "Error sincronizando updater: $_"
+  }
+}
+
+#endregion
+
 function Invoke-Iterate {
   <#
   .SYNOPSIS
-    Ciclo operativo completo del agente: facts, scripts, choco, status.
+    Ciclo operativo completo del agente: facts, scripts, choco, status, update check.
   #>
   Write-Info "=== Iniciando iteracion ==="
+
+  # Generar iteration_id unico basado en ticks de fecha/hora actual
+  $script:IterationId = [string](Get-Date).Ticks
+  Write-Info "Iteration ID: $($script:IterationId)"
+
+  # Flag para rastrear si la iteracion tuvo errores
+  $script:IterationHadErrors = $false
 
   # Validar config
   $cfg = Get-Config
@@ -1317,8 +1571,9 @@ function Invoke-Iterate {
           script_id = $dep.script_id
           content   = $dep.content
         }
-        $exitC = Execute-Script -deployment $depHash -serverUrl $srvUrl -agentId $agentId
+        $exitC = Execute-Script -deployment $depHash -serverUrl $srvUrl -agentId $agentId -iterationId $script:IterationId
         Write-Info "    Exit code: $exitC"
+        if ($exitC -ne 0) { $script:IterationHadErrors = $true }
       }
       Write-Success "Scripts procesados"
     } else {
@@ -1327,10 +1582,11 @@ function Invoke-Iterate {
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Info "Error procesando scripts: $_ (continuando)"
+    $script:IterationHadErrors = $true
   }
 
   # ---- PASO 3: Chocolatey deployments ----
-  Write-Info "Paso 3/4: Consultando choco deployments..."
+  Write-Info "Paso 3/5: Consultando choco deployments..."
   try {
     $chocoDeployments = @(Get-PendingChocoDeployments -serverUrl $srvUrl -agentId $agentId)
     if ($chocoDeployments -and $chocoDeployments.Count -gt 0) {
@@ -1339,6 +1595,7 @@ function Invoke-Iterate {
         Write-Info "  Ejecutando choco $($cd.action) $($cd.package_name)..."
         $exitC = Execute-ChocoDeployment -deployment $cd -serverUrl $srvUrl -agentId $agentId
         Write-Info "    Exit code: $exitC"
+        if ($exitC -ne 0) { $script:IterationHadErrors = $true }
       }
       Write-Success "Choco deployments procesados"
     } else {
@@ -1347,15 +1604,36 @@ function Invoke-Iterate {
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Info "Error procesando choco: $_ (continuando)"
+    $script:IterationHadErrors = $true
   }
 
   # ---- PASO 4: Sincronizar inventario Chocolatey ----
-  Write-Info "Paso 4/4: Sincronizando inventario Chocolatey..."
+  Write-Info "Paso 4/5: Sincronizando inventario Chocolatey..."
   try {
     Sync-ChocoInventory -serverUrl $srvUrl -agentId $agentId
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Info "Error sincronizando inventario choco: $_ (continuando)"
+    $script:IterationHadErrors = $true
+  }
+
+  # ---- PASO 5: Check update ----
+  Write-Info "Paso 5/5: Comprobando actualizaciones..."
+  try {
+    Invoke-CheckAndApplyUpdate -serverUrl $srvUrl
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "Error comprobando actualizaciones: $_ (continuando)"
+  }
+
+  # ---- Post-iteracion: Sincronizar pswm_updater.exe si iteracion limpia ----
+  if (-not $script:IterationHadErrors -and (Test-IsCompiled)) {
+    try {
+      Sync-UpdaterBinary
+    } catch {
+      if ("$_" -match "^EXIT:\d+$") { throw }
+      Write-Info "Error sincronizando updater: $_ (continuando)"
+    }
   }
 
   Write-Success "=== Iteracion completada ==="
@@ -1672,8 +1950,9 @@ Comandos disponibles:
   install             Instalar agente como servicio Windows (requiere .exe y admin)
   uninstall_service   Desinstalar servicio Windows del agente
   svc                 Bucle de servicio (uso interno, ejecutado por el servicio)
-  iterate             Ciclo operativo: recopila facts, ejecuta scripts/choco pendientes, sincroniza
+  iterate             Ciclo operativo: recopila facts, ejecuta scripts/choco pendientes, sincroniza, check update
   dummy_iterate       Escribe fecha, params, PID y usuario en ProgramData\pswm-reborn\test.txt
+  apply_update        Aplicar actualizacion (uso interno, ejecutado por pswm_updater.exe)
   gui                 Abre la interfaz grafica (instalacion o gestion del servicio)
   version             Mostrar version del agente
   help                Mostrar esta ayuda
@@ -1719,6 +1998,7 @@ switch ($Command.ToLower()) {
   "uninstall_service" { Invoke-UninstallService }
   "iterate"           { Invoke-Iterate }
   "dummy_iterate"     { Invoke-DummyIterate }
+  "apply_update"      { Invoke-ApplyUpdate }
   "gui"               { Invoke-Gui }
   "version"           { Invoke-Version }
   "help"              { Invoke-Help }
