@@ -636,7 +636,7 @@ $script:ServiceDisplayName = 'psWinModel Reborn Agent'
 $script:ServiceDescription = 'Agente psWinModel Reborn - bucle de servicio'
 $script:InstallDir = Join-Path $env:ProgramFiles 'pswm-reborn'
 $script:SvcIntervalMinutes = 90
-$script:SvcCommand = 'dummy_iterate'
+$script:SvcCommand = 'iterate'
 #endregion
 
 function Invoke-Svc {
@@ -919,6 +919,444 @@ function Invoke-UninstallService {
   Write-Host "Para eliminarlos manualmente: Remove-Item -Recurse -Force '$($script:InstallDir)'" -ForegroundColor Yellow
   Exit-Cmd 0
 }
+
+#region Iterate - Bucle operativo completo
+
+function Collect-Facts {
+  <# Recopila facts del equipo local y los devuelve como array de hashtables. #>
+  $facts = @()
+
+  # --- OS ---
+  try {
+    $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
+    if ($os) {
+      $facts += @{ fact_key = 'os_name';      value = $os.Caption;             source = 'agent' }
+      $facts += @{ fact_key = 'os_version';   value = $os.Version;             source = 'agent' }
+      $facts += @{ fact_key = 'os_build';     value = $os.BuildNumber;         source = 'agent' }
+      $facts += @{ fact_key = 'os_arch';      value = $os.OSArchitecture;      source = 'agent' }
+      $facts += @{ fact_key = 'os_install_date'; value = $os.InstallDate.ToString('yyyy-MM-dd HH:mm:ss'); source = 'agent' }
+      $facts += @{ fact_key = 'os_last_boot';    value = $os.LastBootUpTime.ToString('yyyy-MM-dd HH:mm:ss'); source = 'agent' }
+    }
+  } catch { }
+
+  # --- Hostname / Domain ---
+  $facts += @{ fact_key = 'hostname'; value = $env:COMPUTERNAME; source = 'agent' }
+  try {
+    $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
+    if ($cs) {
+      $facts += @{ fact_key = 'domain';         value = $cs.Domain;          source = 'agent' }
+      $facts += @{ fact_key = 'total_memory_gb'; value = [math]::Round($cs.TotalPhysicalMemory / 1GB, 2); source = 'agent' }
+      $facts += @{ fact_key = 'manufacturer';   value = $cs.Manufacturer;    source = 'agent' }
+      $facts += @{ fact_key = 'model';          value = $cs.Model;           source = 'agent' }
+    }
+  } catch { }
+
+  # --- CPU ---
+  try {
+    $cpu = Get-CimInstance -ClassName Win32_Processor -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cpu) {
+      $facts += @{ fact_key = 'cpu_name';  value = $cpu.Name.Trim();      source = 'agent' }
+      $facts += @{ fact_key = 'cpu_cores'; value = $cpu.NumberOfCores;    source = 'agent' }
+      $facts += @{ fact_key = 'cpu_logical_processors'; value = $cpu.NumberOfLogicalProcessors; source = 'agent' }
+    }
+  } catch { }
+
+  # --- Discos ---
+  try {
+    $disks = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=3" -ErrorAction SilentlyContinue
+    $diskInfo = @()
+    foreach ($d in $disks) {
+      $diskInfo += @{
+        letter   = $d.DeviceID
+        size_gb  = [math]::Round($d.Size / 1GB, 2)
+        free_gb  = [math]::Round($d.FreeSpace / 1GB, 2)
+        label    = $d.VolumeName
+      }
+    }
+    $facts += @{ fact_key = 'disks'; value = ($diskInfo | ConvertTo-Json -Compress -Depth 3); source = 'agent' }
+  } catch { }
+
+  # --- Red ---
+  try {
+    $nics = Get-CimInstance -ClassName Win32_NetworkAdapterConfiguration -Filter "IPEnabled=True" -ErrorAction SilentlyContinue
+    $netInfo = @()
+    foreach ($n in $nics) {
+      $netInfo += @{
+        description = $n.Description
+        ip          = ($n.IPAddress | Where-Object { $_ -notmatch ':' }) -join ', '
+        mac         = $n.MACAddress
+        gateway     = ($n.DefaultIPGateway -join ', ')
+      }
+    }
+    $facts += @{ fact_key = 'network_adapters'; value = ($netInfo | ConvertTo-Json -Compress -Depth 3); source = 'agent' }
+  } catch { }
+
+  # --- Usuario conectado ---
+  try {
+    $user = (Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue).UserName
+    $facts += @{ fact_key = 'logged_user'; value = if ($user) { $user } else { 'N/A' }; source = 'agent' }
+  } catch { }
+
+  # --- Version del agente ---
+  $agentVer = $script:Version
+  try {
+    $exePath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    # Solo usar FileVersion si estamos corriendo como binario compilado (pswm.exe), no como script PS
+    if ($exePath -match '[/\\]pswm(\.exe)?$') {
+      $fvi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exePath)
+      if ($fvi -and $fvi.FileVersion) { $agentVer = $fvi.FileVersion }
+    }
+  } catch { }
+  $facts += @{ fact_key = 'agent_version'; value = $agentVer; source = 'agent' }
+
+  # --- External facts (scripts .ps1 en external_facts/) ---
+  $extDir = Join-Path $OutDir 'external_facts'
+  if (Test-Path $extDir) {
+    $extScripts = Get-ChildItem -Path $extDir -Filter '*.ps1' -File -ErrorAction SilentlyContinue
+    foreach ($es in $extScripts) {
+      try {
+        $output = & $es.FullName 2>$null | Out-String
+        $facts += @{
+          fact_key    = "ext_$($es.BaseName)"
+          value       = $output.Trim()
+          source      = 'external'
+          script_name = $es.Name
+        }
+      } catch { }
+    }
+  }
+
+  return $facts
+}
+
+function Send-Facts([string]$serverUrl, [int]$agentId, [array]$facts) {
+  $body = @{ facts = $facts } | ConvertTo-Json -Depth 5 -Compress
+  $uri  = "$serverUrl/api/facts/$agentId"
+  try {
+    $res = Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop
+    return $res
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Err "Error enviando facts: $_"
+    return $null
+  }
+}
+
+function Get-PendingDeployments([string]$serverUrl, [int]$agentId) {
+  $uri = "$serverUrl/api/deployments/agent/$agentId"
+  try {
+    $res = Invoke-RestMethod -Uri $uri -Method Get -ErrorAction Stop
+    return $res.deployments
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Err "Error obteniendo despliegues: $_"
+    return @()
+  }
+}
+
+function Execute-Script([hashtable]$deployment, [string]$serverUrl, [int]$agentId) {
+  <# Ejecuta un script de un deployment y reporta el resultado directamente al servidor. #>
+  $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+
+  $cacheDir = Join-Path $OutDir 'scripts_cache'
+  if (-not (Test-Path $cacheDir)) { $null = New-Item -ItemType Directory -Path $cacheDir -Force }
+
+  $scriptFile = Join-Path $cacheDir "script_$($deployment.script_id).ps1"
+  [System.IO.File]::WriteAllText($scriptFile, $deployment.content, [System.Text.Encoding]::UTF8)
+
+  $stdoutVal = ''; $stderrVal = ''; $exitCodeVal = -1; $errorMsg = $null
+  try {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName  = 'powershell.exe'
+    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptFile`""
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow  = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError  = $true
+
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $stdoutVal = $proc.StandardOutput.ReadToEnd()
+    $stderrVal = $proc.StandardError.ReadToEnd()
+    [void]$proc.WaitForExit(300000) # timeout 5min
+    $exitCodeVal = $proc.ExitCode
+    # Si el script produjo salida por stderr y el exit code es 0, forzar exit code 1
+    if ($exitCodeVal -eq 0 -and -not [string]::IsNullOrWhiteSpace($stderrVal)) { $exitCodeVal = 1 }
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    $errorMsg = "$_"
+  }
+
+  # Truncar stdout/stderr si es demasiado largo (max 50 KB)
+  $maxLen = 50000
+  if ($stdoutVal.Length -gt $maxLen) { $stdoutVal = $stdoutVal.Substring(0, $maxLen) + "`n...[truncado]" }
+  if ($stderrVal.Length -gt $maxLen) { $stderrVal = $stderrVal.Substring(0, $maxLen) + "`n...[truncado]" }
+
+  $finishedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+
+  # Reportar directamente al servidor
+  Send-ScriptRun -serverUrl $serverUrl -agentId $agentId `
+    -deploymentId $deployment.id -scriptId $deployment.script_id `
+    -startedAt $startedAt -finishedAt $finishedAt `
+    -exitCode $exitCodeVal -stdoutText $stdoutVal -stderrText $stderrVal -errorText $errorMsg
+
+  return $exitCodeVal
+}
+
+function Send-ScriptRun(
+  [string]$serverUrl, [int]$agentId,
+  $deploymentId, $scriptId,
+  [string]$startedAt, [string]$finishedAt,
+  $exitCode, [string]$stdoutText, [string]$stderrText, [string]$errorText
+) {
+  $body = ConvertTo-Json -Depth 3 -Compress @{
+    deployment_id = $deploymentId
+    agent_id      = $agentId
+    script_id     = $scriptId
+    started_at    = $startedAt
+    finished_at   = $finishedAt
+    exit_code     = $exitCode
+    stdout        = $stdoutText
+    stderr        = $stderrText
+    error         = $errorText
+  }
+  $uri = "$serverUrl/api/deployments/runs"
+  try {
+    Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Err "Error reportando script run: $_"
+  }
+}
+
+function Get-PendingChocoDeployments([string]$serverUrl, [int]$agentId) {
+  $uri = "$serverUrl/api/choco/deployments/agent/$agentId"
+  try {
+    $res = Invoke-RestMethod -Uri $uri -Method Get -ErrorAction Stop
+    return $res.deployments
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Err "Error obteniendo choco deployments: $_"
+    return @()
+  }
+}
+
+function Execute-ChocoDeployment([object]$deployment, [string]$serverUrl, [int]$agentId) {
+  <# Ejecuta una operacion Chocolatey y reporta el resultado directamente al servidor. #>
+  $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+  $action = $deployment.action
+  $pkg    = $deployment.package_name
+  $ver    = $deployment.version
+  $chParams = $deployment.params
+
+  $chocoArgs = ''
+  switch ($action) {
+    'install'   { $chocoArgs = "install $pkg -y" }
+    'upgrade'   { $chocoArgs = "upgrade $pkg -y" }
+    'uninstall' { $chocoArgs = "uninstall $pkg -y" }
+    default     { $chocoArgs = "install $pkg -y" }
+  }
+  if ($ver)      { $chocoArgs += " --version=$ver" }
+  if ($chParams) { $chocoArgs += " $chParams" }
+
+  $stdoutVal = ''; $stderrVal = ''; $exitCodeVal = -1; $errorMsg = $null
+  try {
+    $chocoExe = (Get-Command choco -ErrorAction SilentlyContinue).Source
+    if (-not $chocoExe) { $chocoExe = "$env:ProgramData\chocolatey\bin\choco.exe" }
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName  = $chocoExe
+    $psi.Arguments = $chocoArgs
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow  = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError  = $true
+
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $stdoutVal = $proc.StandardOutput.ReadToEnd()
+    $stderrVal = $proc.StandardError.ReadToEnd()
+    [void]$proc.WaitForExit(600000) # timeout 10min
+    $exitCodeVal = $proc.ExitCode
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    $errorMsg = "$_"
+  }
+
+  $maxLen = 50000
+  if ($stdoutVal.Length -gt $maxLen) { $stdoutVal = $stdoutVal.Substring(0, $maxLen) + "`n...[truncado]" }
+  if ($stderrVal.Length -gt $maxLen) { $stderrVal = $stderrVal.Substring(0, $maxLen) + "`n...[truncado]" }
+
+  $finishedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+
+  # Reportar directamente al servidor
+  Send-ChocoRun -serverUrl $serverUrl -agentId $agentId `
+    -deploymentId $deployment.id -packageId $deployment.package_id -actionName $action `
+    -startedAt $startedAt -finishedAt $finishedAt `
+    -exitCode $exitCodeVal -stdoutText $stdoutVal -stderrText $stderrVal -errorText $errorMsg
+
+  return $exitCodeVal
+}
+
+function Send-ChocoRun(
+  [string]$serverUrl, [int]$agentId,
+  $deploymentId, $packageId, [string]$actionName,
+  [string]$startedAt, [string]$finishedAt,
+  $exitCode, [string]$stdoutText, [string]$stderrText, [string]$errorText
+) {
+  $body = ConvertTo-Json -Depth 3 -Compress @{
+    deployment_id = $deploymentId
+    agent_id      = $agentId
+    package_id    = $packageId
+    action        = $actionName
+    started_at    = $startedAt
+    finished_at   = $finishedAt
+    exit_code     = $exitCode
+    stdout        = $stdoutText
+    stderr        = $stderrText
+    error         = $errorText
+  }
+  $uri = "$serverUrl/api/choco/runs"
+  try {
+    Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Err "Error reportando choco run: $_"
+  }
+}
+
+function Sync-ChocoInventory([string]$serverUrl, [int]$agentId) {
+  <# Sincroniza la lista de paquetes Chocolatey instalados localmente con el servidor. #>
+  try {
+    $chocoExe = (Get-Command choco -ErrorAction SilentlyContinue).Source
+    if (-not $chocoExe) { $chocoExe = "$env:ProgramData\chocolatey\bin\choco.exe" }
+    if (-not (Test-Path $chocoExe)) {
+      Write-Info "Chocolatey no instalado, saltando sincronizacion de inventario."
+      return
+    }
+
+    $raw = & $chocoExe list --local-only --limit-output 2>$null
+    $packages = @()
+    foreach ($line in $raw) {
+      if ($line -match '^(.+?)\|(.+)$') {
+        $packages += @{
+          name    = $matches[1]
+          version = $matches[2]
+          pinned  = $false
+        }
+      }
+    }
+
+    $body = @{
+      agent_id = $agentId
+      packages = $packages
+    } | ConvertTo-Json -Depth 3 -Compress
+    $uri = "$serverUrl/api/choco/agent-packages"
+    Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+    Write-Info "Inventario choco sincronizado: $($packages.Count) paquetes"
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "No se pudo sincronizar inventario choco: $_"
+  }
+}
+
+function Invoke-Iterate {
+  <#
+  .SYNOPSIS
+    Ciclo operativo completo del agente: facts, scripts, choco, status.
+  #>
+  Write-Info "=== Iniciando iteracion ==="
+
+  # Validar config
+  $cfg = Get-Config
+  if (-not $cfg -or -not $cfg.PSObject.Properties['agent_id'] -or -not $cfg.agent_id) {
+    Write-Err "El agente no esta registrado. Ejecute 'pswm.exe reg_init_check' primero."
+    Exit-Cmd 1
+  }
+
+  $agentId = [int]$cfg.agent_id
+  $srvUrl  = Get-ServerUrl
+
+  Write-Info "Agent ID: $agentId | Server: $srvUrl"
+
+  if (-not (Test-ServerReachable $srvUrl)) {
+    Write-Err "Servidor no accesible: $srvUrl"
+    Exit-Cmd 2
+  }
+
+  # ---- PASO 1: Facts ----
+  Write-Info "Paso 1/4: Recopilando y enviando facts..."
+  try {
+    $facts = Collect-Facts
+    $res = Send-Facts -serverUrl $srvUrl -agentId $agentId -facts $facts
+    if ($res) {
+      Write-Success "Facts enviados: $($res.count) registros"
+    } else {
+      Write-Info "No se pudieron enviar facts (continuando)"
+    }
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "Error recopilando/enviando facts: $_ (continuando)"
+  }
+
+  # ---- PASO 2: Scripts pendientes ----
+  Write-Info "Paso 2/4: Consultando scripts pendientes..."
+  try {
+    $deployments = Get-PendingDeployments -serverUrl $srvUrl -agentId $agentId
+    if ($deployments -and $deployments.Count -gt 0) {
+      Write-Info "$($deployments.Count) despliegue(s) de scripts encontrados"
+      foreach ($dep in $deployments) {
+        if (-not $dep.enabled) { continue }  # skip disabled
+        Write-Info "  Ejecutando script '$($dep.name)' (deployment $($dep.id), script $($dep.script_id))..."
+        $depHash = @{
+          id        = $dep.id
+          script_id = $dep.script_id
+          content   = $dep.content
+        }
+        $exitC = Execute-Script -deployment $depHash -serverUrl $srvUrl -agentId $agentId
+        Write-Info "    Exit code: $exitC"
+      }
+      Write-Success "Scripts procesados"
+    } else {
+      Write-Info "No hay scripts pendientes"
+    }
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "Error procesando scripts: $_ (continuando)"
+  }
+
+  # ---- PASO 3: Chocolatey deployments ----
+  Write-Info "Paso 3/4: Consultando choco deployments..."
+  try {
+    $chocoDeployments = Get-PendingChocoDeployments -serverUrl $srvUrl -agentId $agentId
+    if ($chocoDeployments -and $chocoDeployments.Count -gt 0) {
+      Write-Info "$($chocoDeployments.Count) choco deployment(s) encontrados"
+      foreach ($cd in $chocoDeployments) {
+        Write-Info "  Ejecutando choco $($cd.action) $($cd.package_name)..."
+        $exitC = Execute-ChocoDeployment -deployment $cd -serverUrl $srvUrl -agentId $agentId
+        Write-Info "    Exit code: $exitC"
+      }
+      Write-Success "Choco deployments procesados"
+    } else {
+      Write-Info "No hay choco deployments pendientes"
+    }
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "Error procesando choco: $_ (continuando)"
+  }
+
+  # ---- PASO 4: Sincronizar inventario Chocolatey ----
+  Write-Info "Paso 4/4: Sincronizando inventario Chocolatey..."
+  try {
+    Sync-ChocoInventory -serverUrl $srvUrl -agentId $agentId
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "Error sincronizando inventario choco: $_ (continuando)"
+  }
+
+  Write-Success "=== Iteracion completada ==="
+  Exit-Cmd 0
+}
+
+#endregion
 
 function Invoke-DummyIterate {
   <#
@@ -1228,6 +1666,7 @@ Comandos disponibles:
   install             Instalar agente como servicio Windows (requiere .exe y admin)
   uninstall_service   Desinstalar servicio Windows del agente
   svc                 Bucle de servicio (uso interno, ejecutado por el servicio)
+  iterate             Ciclo operativo: recopila facts, ejecuta scripts/choco pendientes, sincroniza
   dummy_iterate       Escribe fecha, params, PID y usuario en ProgramData\pswm-reborn\test.txt
   gui                 Abre la interfaz grafica (instalacion o gestion del servicio)
   version             Mostrar version del agente
@@ -1249,6 +1688,7 @@ Ejemplos:
   pswm.exe install
   pswm.exe uninstall_service
   pswm.exe gencert -KeySize 4096
+  pswm.exe iterate
   pswm.exe dummy_iterate
   pswm.exe gui
   pswm.exe version
@@ -1271,6 +1711,7 @@ switch ($Command.ToLower()) {
   "svc"               { Invoke-Svc }
   "install"           { Invoke-Install }
   "uninstall_service" { Invoke-UninstallService }
+  "iterate"           { Invoke-Iterate }
   "dummy_iterate"     { Invoke-DummyIterate }
   "gui"               { Invoke-Gui }
   "version"           { Invoke-Version }
