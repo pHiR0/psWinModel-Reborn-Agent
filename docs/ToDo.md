@@ -10,7 +10,7 @@ IMPORTANTE: No te olvides de marcar en este archivo va inmplementación realizad
 
 Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas mejoras o correcciones e implementalas, segun los criterios indicados anteriormente.
 
-No tienes que modificar el contenido, mas que para marcarlo como hecho, si quieres puedes añadir algo bajo el punto que corresponda comentarios que empiecen por # 
+No tienes que modificar el contenido, nada mas que para marcarlo como hecho, si quieres puedes añadir algo bajo el punto que corresponda, comentarios que empiecen por # 
 
 ---
 
@@ -173,3 +173,13 @@ No tienes que modificar el contenido, mas que para marcarlo como hecho, si quier
 > Minimo 8 caracteres.
 - Al hacer click sobre el nombre del Agente quiero que entre a los detalles del agente lo mismo que el icono del ojo
 - En la configuración quiero tener la opcion de descargar alguans de las versiones del pswm.exe que están subidas.
+
+- En la Gestion de agentes, en el buscador el selector de Organizacion y ubicacion, quiero que sea el mismo selector con un popup que usamos para seleccionar una ubicacion. Con este metodo podemos prescindir del dropdown Organizacion y Ubicacion.
+- En seccion "Cola de aprobación" la seccion "Registros por Token" y "Cola de aprobación" pueden estar mezclados en una misma tabla con los siguiente datos:
+> ID, Hostname, IP, Método, Fecha Solicitud,Estado,Aprobado por
+> En la columna "Aprobado por" , aparecerá el nombre de usuario que lo aprobó, o si es un token pon el texto <token> (o algo similar mas agradablea la experiencia de usuario) y si hacemos click sobre él despliega el codigo del token
+- Mejoras sobre el icono de info de cada uno de los tokens en "Tokens de registro"
+> Pon el  icono justo a la derecha del icono para copiar el token, con esto puedes eliminar la columna creado.
+> Cuando hago click sobre el icono no se ve el popup completo queda atrapado dentro de la tabla de los Tokens y tengo que hacer scroll con la rueda del mouse
+- En la configuración quiero una opcion que indicando una cantidad de días en las que un agente no contacte se considera inactivo, y en ese caso no se muestra en la vistas Todos los agentes.
+> Añadiremos un switch en la barra de búsqueda y filstrado que diga "Mostrar Inactivos"
