@@ -129,12 +129,47 @@ No tienes que modificar el contenido, mas que para marcarlo como hecho, si quier
 > En el agente hay que tener en cuenta que se puede hacer mediante linea de comandos desatendido, y mediante gui, en el cual ya tenemos 2 metodos, por lo que hay que añadir algo para que el usuario seleccione el método.
 > Implementado: tabla enrollment_tokens en db.js (token, org, location, max_uses, expires_at, revoked). 4 endpoints en agents.js (GET/POST tokens, DELETE revoke, POST register/token). Web console: sección "Tokens de Registro" en página de cola con crear/revocar/copiar y tabla completa. Agente: comando reg_token (CLI con -Token param), función Invoke-RegToken, GUI con selector RadioButton Cola/Token y campo token.
 
-- En la webconsole , en la "Cola de Aprobación de Agentes" quiero que cambies la estructura, "Cola de Aprobación de Agentes" y "Tokens" , separados en Tabs.
++ En la webconsole , en la "Cola de Aprobación de Agentes" quiero que cambies la estructura, "Cola de Aprobación de Agentes" y "Tokens" , separados en Tabs.
 > Para ambos añade paginación de 20 items, pero que permita seleccionar en un desplegable otras paginaciones de 50,100, y 200
-- Tambien quiero que se puedan editar los Tokens, para:
+> Implementado: queue/+page.svelte reescrito con activeTab ('queue'|'tokens'), paginación independiente para cada tab con selector de 20/50/100/200 items y botones Anterior/Siguiente.
++ Tambien quiero que se puedan editar los Tokens, para:
 > Aumentar los usos
 > Cambiar la caducidad
 > Cambiar la ubicacion
 > Cambiar la descripcion
 > El resto igual
-- En Configuración tambien quiero que lo reordenes usando tabs.
+> Implementado: PUT /api/agents/tokens/:id en agents.js (actualiza description, max_uses, expires_at, location_id, organization_id con COALESCE). api.ts: tokens.update(). Modal de edición en la tab Tokens de queue/+page.svelte con selector org/ubicación.
++ En Configuración tambien quiero que lo reordenes usando tabs.
+> Implementado: settings/+page.svelte con tabs 'Retención' y 'Actualizaciones', variable activeSettingsTab.
++ En la ficha de los agentes:
+> no se refleja el Hostname ni la fecha de creacion "Creado"
+> La organización y ubicacion quiero que se muestre igual que las estas mostrando en los despliegues con un buget tipo pildora con todo el path y incluyendo los emojis 🏢  y 📍 segun corresponda
+> Implementado: agents/[id]/+page.svelte — Hostname usa agent.name (columna real), Creado usa agent.registered_at (columna real). Org/ubicación reemplazadas por badge píldora con 🏢+📍.
++ Como por ahora no están desarrollandos puedes dejarlos presente pero con estido deshabilitado la seccion chocolatey /choco y depliegues choco /choco/deployments , tambien sesiones remotas /sessions
+> Implementado: +layout.svelte — items /choco, /choco/deployments y /sessions tienen disabled:true. Se renderizan como <span> con opacity-40, cursor-not-allowed y badge 'pronto' en ambos bloques de nav.
++ Deberiamos usar un icono, no tiene porque ser emoji sino de algun esquema de iconos famosos, para identificar los scripts powersherll, usarlo en su seccion y tambien dentro de los depoyments y los "Scripts Runs"
+> Implementado: SVG Heroicons v1 terminal/command-line (path: M8 9l3 3-3 3m5 0h3M5 20...) en color text-blue-600. Añadido en: heading 'Scripts PowerShell' en scripts/+page.svelte, heading 'Ejecuciones de Scripts' en agents/[id]/+page.svelte, tab 'Script Runs' con icon prop en tabs array, label 'Scripts PowerShell' en deployments/+page.svelte.
+
+- En la ficha de agente, si "Ultimo contacto" y "Ultima vez visto" son iguales mostrar solo el primero.
+- En la vista "Todos los Agentes" quiero poder filtrar por :
+> Organización
+> Ubicación
+> Tambien un campo para buscar texto entre nombre del agente, owner y anotación
+- En la cola de aprobación:
+> Es necesario distinguir el metodo de aprobación por ahora aprobacion manual en cola, y automatica por token, a parte de indicarlo como texto, tambien un icono para cada tipo de aprobación lo haría mas agradable a la hora de localizarlo.
+> Si fue manual, hay que registrar el usuario que lo aprobó
+> Si fue por token, hay que indicar el token y la IP que tenía el agente en ese momento al registrarse, no hace falta mostrar el token solo algo como que diga "mostrar token" y entonce si lo despliegue
+- En los "Tokens de registro"
+> Cada token debe tener registrado quien lo creó, y la fecha y hora, podríamos ponerle un discreto icono de info para que muestre esa informacion al pulsarlo.
+- Los Scripts Powershell a primera vista, quiero que estén ordenados por OrderID, tambien quiero que estén paginados a 20 por defecto y :
+> Tener un buscardor para buscar por nombre , o descripcion
+- en la vista Despliegues:
+> Ver el ID no me aporta nada podemos ocultarlo, podemos poner un dicreto icono de info con un tooltip con el ID
+> Tammbien quiero un buscador de texto apra buscar por nombre scripts, o location
+> Y tambien un filtro por seleccion de Ubicacion.
+> También quiego paginado aquí de 20 por defecto.
+- Tal como hemos estado haciendo en las vistas "Todos los agentes","Grupos","Etiquetas","Organizaciones" y "Usuarios", tambien quiero opciones de paginado a 20 por defecto y buscador dentro de la vista/seccion
+- Añade tambien la página del perfil del usuario, donde podrá cambiar por ahora su contraseña:
+> Minimo 8 caracteres.
+- Al hacer click sobre el nombre del Agente quiero que entre a los detalles del agente lo mismo que el icono del ojo
+- En la configuración quiero tener la opcion de descargar alguans de las versiones del pswm.exe que están subidas.
