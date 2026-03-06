@@ -174,12 +174,18 @@ No tienes que modificar el contenido, nada mas que para marcarlo como hecho, si 
 - Al hacer click sobre el nombre del Agente quiero que entre a los detalles del agente lo mismo que el icono del ojo
 - En la configuración quiero tener la opcion de descargar alguans de las versiones del pswm.exe que están subidas.
 
-- En la Gestion de agentes, en el buscador el selector de Organizacion y ubicacion, quiero que sea el mismo selector con un popup que usamos para seleccionar una ubicacion. Con este metodo podemos prescindir del dropdown Organizacion y Ubicacion.
-- En seccion "Cola de aprobación" la seccion "Registros por Token" y "Cola de aprobación" pueden estar mezclados en una misma tabla con los siguiente datos:
++ En la Gestion de agentes, en el buscador el selector de Organizacion y ubicacion, quiero que sea el mismo selector con un popup que usamos para seleccionar una ubicacion. Con este metodo podemos prescindir del dropdown Organizacion y Ubicacion.
++ En seccion "Cola de aprobación" la seccion "Registros por Token" y "Cola de aprobación" pueden estar mezclados en una misma tabla con los siguiente datos:
 > ID, Hostname, IP, Método, Fecha Solicitud,Estado,Aprobado por
 > En la columna "Aprobado por" , aparecerá el nombre de usuario que lo aprobó, o si es un token pon el texto <token> (o algo similar mas agradablea la experiencia de usuario) y si hacemos click sobre él despliega el codigo del token
-- Mejoras sobre el icono de info de cada uno de los tokens en "Tokens de registro"
++ Mejoras sobre el icono de info de cada uno de los tokens en "Tokens de registro"
 > Pon el  icono justo a la derecha del icono para copiar el token, con esto puedes eliminar la columna creado.
 > Cuando hago click sobre el icono no se ve el popup completo queda atrapado dentro de la tabla de los Tokens y tengo que hacer scroll con la rueda del mouse
-- En la configuración quiero una opcion que indicando una cantidad de días en las que un agente no contacte se considera inactivo, y en ese caso no se muestra en la vistas Todos los agentes.
++ En la configuración quiero una opcion que indicando una cantidad de días en las que un agente no contacte se considera inactivo, y en ese caso no se muestra en la vistas Todos los agentes.
 > Añadiremos un switch en la barra de búsqueda y filstrado que diga "Mostrar Inactivos"
+
+- Los cambios hechos en "Todos los agente" la lista de "Gestion de agentes" se ha estropeado:
++ Ahora aparece "No hay agentes registrados" y si hay al menos uno
+> Implementado: La causa era que fetch('/api/settings') usaba URL relativa (puerto 5173 en lugar de 3000) y el Promise.all completo fallaba. Solucionado: (1) agents+orgs se cargan en un Promise.all separado, (2) settings se carga después en su propio try/catch sin bloquear, (3) inactiveThresholdDays default cambiado a 0 para no filtrar hasta que se cargue el valor real.
++ En el nuevo selector de "Org/Ubicacion" no está bien implementado, sale un popup, dejando el fondo negro y el popup dice "Filtrar por Org / Ubicacion" y debajo "Sin Organizaciones" y esto es falso, quiero que el popup que se muestre sea el mismo que usamos, dentro de los despliegues, cuando editamos uno de tipo location, el popup que se despliega para "Seleccionar Organización y Ubicacion"
+> Implementado: modal reemplazado por layout grid 3 columnas (igual que despliegues): columna izquierda = lista de organizaciones con botón "Sólo" en hover; columna derecha = TreeNode lazy de ubicaciones de la org activa.
