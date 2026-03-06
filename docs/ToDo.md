@@ -150,29 +150,39 @@ No tienes que modificar el contenido, nada mas que para marcarlo como hecho, si 
 + Deberiamos usar un icono, no tiene porque ser emoji sino de algun esquema de iconos famosos, para identificar los scripts powersherll, usarlo en su seccion y tambien dentro de los depoyments y los "Scripts Runs"
 > Implementado: SVG Heroicons v1 terminal/command-line (path: M8 9l3 3-3 3m5 0h3M5 20...) en color text-blue-600. Añadido en: heading 'Scripts PowerShell' en scripts/+page.svelte, heading 'Ejecuciones de Scripts' en agents/[id]/+page.svelte, tab 'Script Runs' con icon prop en tabs array, label 'Scripts PowerShell' en deployments/+page.svelte.
 
-- En la ficha de agente, si "Ultimo contacto" y "Ultima vez visto" son iguales mostrar solo el primero.
-- En la vista "Todos los Agentes" quiero poder filtrar por :
++ En la ficha de agente, si "Ultimo contacto" y "Ultima vez visto" son iguales mostrar solo el primero.
+> Ya implementado: agents/[id]/+page.svelte usa `{#if agent.last_seen && agent.last_seen !== agent.last_contact}` para mostrar solo el primer campo cuando son iguales.
++ En la vista "Todos los Agentes" quiero poder filtrar por :
 > Organización
 > Ubicación
 > Tambien un campo para buscar texto entre nombre del agente, owner y anotación
-- En la cola de aprobación:
+> Implementado: agents/+page.svelte — filtros de org/ubicación con popup grid 3 col (mismo que despliegues), buscador por nombre/owner/anotación, switch Mostrar Inactivos, paginado con selector de 20/50/100/200.
++ En la cola de aprobación:
 > Es necesario distinguir el metodo de aprobación por ahora aprobacion manual en cola, y automatica por token, a parte de indicarlo como texto, tambien un icono para cada tipo de aprobación lo haría mas agradable a la hora de localizarlo.
 > Si fue manual, hay que registrar el usuario que lo aprobó
 > Si fue por token, hay que indicar el token y la IP que tenía el agente en ese momento al registrarse, no hace falta mostrar el token solo algo como que diga "mostrar token" y entonce si lo despliegue
-- En los "Tokens de registro"
+> Implementado: tabla unificada en queue/+page.svelte muestra columna Método con icono 🔑=Token (azul) y 📋=Cola manual (pizarra). Columna "Aprobado por" muestra usuario admin o botón "Token" clicable que abre popup con el valor del token. IP visible en columna dedicada.
++ En los "Tokens de registro"
 > Cada token debe tener registrado quien lo creó, y la fecha y hora, podríamos ponerle un discreto icono de info para que muestre esa informacion al pulsarlo.
-- Los Scripts Powershell a primera vista, quiero que estén ordenados por OrderID, tambien quiero que estén paginados a 20 por defecto y :
+> Implementado: campos created_by_name y created_at en tabla enrollment_tokens. Botón icono ℹ️ junto al icono 📋 en la tabla de tokens muestra popup posicionado bajo el icono con usuario creador y fecha.
++ Los Scripts Powershell a primera vista, quiero que estén ordenados por OrderID, tambien quiero que estén paginados a 20 por defecto y :
 > Tener un buscardor para buscar por nombre , o descripcion
-- en la vista Despliegues:
+> Implementado: scripts/+page.svelte con búsqueda por nombre/descripción, paginado 20 con selector 20/50/100, ordenación por order_id.
++ en la vista Despliegues:
 > Ver el ID no me aporta nada podemos ocultarlo, podemos poner un dicreto icono de info con un tooltip con el ID
 > Tammbien quiero un buscador de texto apra buscar por nombre scripts, o location
 > Y tambien un filtro por seleccion de Ubicacion.
 > También quiego paginado aquí de 20 por defecto.
-- Tal como hemos estado haciendo en las vistas "Todos los agentes","Grupos","Etiquetas","Organizaciones" y "Usuarios", tambien quiero opciones de paginado a 20 por defecto y buscador dentro de la vista/seccion
-- Añade tambien la página del perfil del usuario, donde podrá cambiar por ahora su contraseña:
+> Implementado: deployments/+page.svelte — ID oculto con icono 🛈 tooltip, buscador texto deplSearch, filtro por location (select de locationList), paginado 20 con selector 20/50/100.
++ Tal como hemos estado haciendo en las vistas "Todos los agentes","Grupos","Etiquetas","Organizaciones" y "Usuarios", tambien quiero opciones de paginado a 20 por defecto y buscador dentro de la vista/seccion
+> Implementado en todas: groups, tags, organizations, users tienen búsqueda por nombre/descripción y paginado 20/50/100.
++ Añade tambien la página del perfil del usuario, donde podrá cambiar por ahora su contraseña:
 > Minimo 8 caracteres.
-- Al hacer click sobre el nombre del Agente quiero que entre a los detalles del agente lo mismo que el icono del ojo
-- En la configuración quiero tener la opcion de descargar alguans de las versiones del pswm.exe que están subidas.
+> Implementado: web-console/src/routes/(app)/profile/+page.svelte con cambio de contraseña (validación mínimo 8 caracteres).
++ Al hacer click sobre el nombre del Agente quiero que entre a los detalles del agente lo mismo que el icono del ojo
+> Implementado: el nombre del agente en agents/+page.svelte es un `<a href="/agents/{agent.id}">` que lleva a los detalles.
++ En la configuración quiero tener la opcion de descargar alguans de las versiones del pswm.exe que están subidas.
+> Implementado: settings/+page.svelte — tabla de versiones con botón "Descargar" en cada fila que llama a GET /api/updates/:id/download-file y descarga el .exe.
 
 + En la Gestion de agentes, en el buscador el selector de Organizacion y ubicacion, quiero que sea el mismo selector con un popup que usamos para seleccionar una ubicacion. Con este metodo podemos prescindir del dropdown Organizacion y Ubicacion.
 + En seccion "Cola de aprobación" la seccion "Registros por Token" y "Cola de aprobación" pueden estar mezclados en una misma tabla con los siguiente datos:
@@ -184,11 +194,18 @@ No tienes que modificar el contenido, nada mas que para marcarlo como hecho, si 
 + En la configuración quiero una opcion que indicando una cantidad de días en las que un agente no contacte se considera inactivo, y en ese caso no se muestra en la vistas Todos los agentes.
 > Añadiremos un switch en la barra de búsqueda y filstrado que diga "Mostrar Inactivos"
 
-- Los cambios hechos en "Todos los agente" la lista de "Gestion de agentes" se ha estropeado:
++ Los cambios hechos en "Todos los agente" la lista de "Gestion de agentes" se ha estropeado:
 + Ahora aparece "No hay agentes registrados" y si hay al menos uno
 > Implementado: La causa era que fetch('/api/settings') usaba URL relativa (puerto 5173 en lugar de 3000) y el Promise.all completo fallaba. Solucionado: (1) agents+orgs se cargan en un Promise.all separado, (2) settings se carga después en su propio try/catch sin bloquear, (3) inactiveThresholdDays default cambiado a 0 para no filtrar hasta que se cargue el valor real.
 + En el nuevo selector de "Org/Ubicacion" no está bien implementado, sale un popup, dejando el fondo negro y el popup dice "Filtrar por Org / Ubicacion" y debajo "Sin Organizaciones" y esto es falso, quiero que el popup que se muestre sea el mismo que usamos, dentro de los despliegues, cuando editamos uno de tipo location, el popup que se despliega para "Seleccionar Organización y Ubicacion"
 > Implementado: modal reemplazado por layout grid 3 columnas (igual que despliegues): columna izquierda = lista de organizaciones con botón "Sólo" en hover; columna derecha = TreeNode lazy de ubicaciones de la org activa.
 
-- Quiero que a los despliegues se les añada un icono para diferenciarlos segun el Objetivo que son "Todos", "Grupos","Organizaciones","Localizaciones","Agentes"
-- Tambien en los despliegues la columna "Objetivos", no me aporta nada la ocultamos.
++ Quiero que a los despliegues se les añada un icono para diferenciarlos segun el Objetivo que son "Todos", "Grupos","Organizaciones","Localizaciones","Agentes"
++ Tambien en los despliegues la columna "Objetivos", no me aporta nada la ocultamos.
+> Implementado: eliminada columna "Objetivos" del thead y tbody. Añadido icono de color por tipo de objetivo en la columna Nombre: 🌐 verde=Todos, 👥 morado=Grupos, 🏢 azul=Orgs, 📍 amarillo=Localizaciones, 🖥 pizarra=Agentes. El texto del tipo también lleva el color correspondiente.
++ Quiero que los facts de los agentes sean mostrados como uan treeview en formato Windows Classic Tree View
+> Implementado: reescrita la tab Facts en agents/[id]/+page.svelte con arbol agrupado por categoría (prefix del fact_key). Nodos carpeta expandibles con ▶/▼ e icono de folder amarillo. Facts simples como hojas con líneas conectoras estilo Windows. Facts JSON expandibles con sub-árbol recursivo mostrando claves/valores indentados.
++ También me gustaría tener disponible junto al botón  "Recargar" uno que permita bajar un JSON con todos los facts del agente. Quiero que ambos botones tengan iconos representativos en lugar del texto.
+> Implementado: botón Recargar convertido a icono SVG (flecha circular). Añadido botón Descargar JSON con icono de descarga (flecha hacia abajo). La descarga genera agent-{id}-facts.json parseando JSON facts a objetos nativos.
++ El popup que se muestra al pulsar sobre el icono de info,en los "Tokens de registros", que muestra el usuario que lo ha creado y la fecha que se creó el token, aparece arriba del todo a la derecha del cuerpo de la webapp, lo suyo es que aparezca bajo el icono info, como si surgiera una viñeta del mismo.
+> Implementado: añadido estado tokenInfoPopupPos con coordenadas calculadas del getBoundingClientRect() del botón. El popup usa fixed con top/left dinámicos en lugar de top-4 right-4. Incluye flecha indicadora (triangulito) en la parte superior. Overlay transparente para cerrar al hacer clic fuera.
