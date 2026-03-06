@@ -445,11 +445,11 @@ function Invoke-RegToken {
     $resp = Invoke-RestMethod -Uri "$srvUrl/api/agents/register/token" `
       -Method POST -ContentType 'application/json' -Body $body -ErrorAction Stop
 
-    if ($resp.agent -and $resp.agent.id) {
-      Write-Success "Agente registrado correctamente! Agent ID: $($resp.agent.id)"
+    if ($resp.agent_id) {
+      Write-Success "Agente registrado correctamente! Agent ID: $($resp.agent_id)"
 
       $finalCfg = @{
-        agent_id      = $resp.agent.id
+        agent_id      = $resp.agent_id
         hostname      = $env:COMPUTERNAME
         server_url    = $srvUrl
         registered_via = 'token'
@@ -1547,6 +1547,18 @@ function Invoke-ApplyUpdate {
     }
   }
 
+  # Guardar copia del nuevo exe para autoreemplazar pswm_updater.exe en la proxima iteracion
+  # (no podemos reemplazarnos a nosotros mismos mientras estamos en ejecucion)
+  if ($success) {
+    $pendingUpdater = Join-Path $myDir 'pswm_updater.exe.pending'
+    try {
+      Copy-Item -Path $sourceFile -Destination $pendingUpdater -Force
+      Write-Info "pswm_updater.exe.pending guardado para autoreemplazo en proxima iteracion"
+    } catch {
+      Write-Info "No se pudo guardar pending updater: $_ (se sincronizara por version en la proxima iteracion)"
+    }
+  }
+
   # Limpiar archivo temporal
   Remove-Item $sourceFile -Force -ErrorAction SilentlyContinue
 
@@ -1568,18 +1580,43 @@ function Invoke-ApplyUpdate {
 function Sync-UpdaterBinary {
   <#
   .SYNOPSIS
-    Tras una iteracion limpia, compara la version de pswm.exe con pswm_updater.exe.
-    Si difieren, elimina el antiguo updater y crea una copia de pswm.exe.
+    Sincroniza pswm_updater.exe con la version actual de pswm.exe.
+    Primero intenta aplicar un .pending guardado por Invoke-ApplyUpdate.
+    Si no hay pending, compara versiones y copia si difieren.
+    Se llama siempre al final de cada iteracion (con o sin errores).
   #>
   if (-not (Test-IsCompiled)) { return }
 
   $myDir = Split-Path -Parent ([System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName)
-  $pswmExe = Join-Path $myDir 'pswm.exe'
-  $updaterExe = Join-Path $myDir 'pswm_updater.exe'
+  $pswmExe     = Join-Path $myDir 'pswm.exe'
+  $updaterExe  = Join-Path $myDir 'pswm_updater.exe'
+  $pendingExe  = Join-Path $myDir 'pswm_updater.exe.pending'
 
+  # --- Paso 1: aplicar pending si existe (guardado por el updater al terminar la actualizacion) ---
+  if (Test-Path $pendingExe) {
+    Write-Info "Encontrado pswm_updater.exe.pending, aplicando autoreemplazo..."
+    try {
+      if (Test-Path $updaterExe) { Remove-Item $updaterExe -Force }
+      Move-Item -Path $pendingExe -Destination $updaterExe -Force
+      Write-Success "pswm_updater.exe autoreemplazado desde .pending"
+    } catch {
+      if ("$_" -match "^EXIT:\d+$") { throw }
+      Write-Info "Error aplicando .pending: $_ (reintentando con copia)"
+      try {
+        Copy-Item -Path $pendingExe -Destination $updaterExe -Force
+        Remove-Item $pendingExe -Force -ErrorAction SilentlyContinue
+        Write-Success "pswm_updater.exe autoreemplazado (copia)"
+      } catch {
+        Write-Info "Error en copia de .pending: $_"
+      }
+    }
+    return
+  }
+
+  # --- Paso 2: sincronizar por version si difieren ---
   if (-not (Test-Path $pswmExe)) { return }
 
-  $pswmVersion = ''
+  $pswmVersion    = ''
   $updaterVersion = ''
 
   try {
@@ -1599,16 +1636,14 @@ function Sync-UpdaterBinary {
     return
   }
 
-  Write-Info "Sincronizando pswm_updater.exe: pswm=$pswmVersion updater=$updaterVersion"
+  Write-Info "Sincronizando pswm_updater.exe por version: pswm=$pswmVersion updater=$updaterVersion"
   try {
-    if (Test-Path $updaterExe) {
-      Remove-Item $updaterExe -Force
-    }
+    if (Test-Path $updaterExe) { Remove-Item $updaterExe -Force }
     Copy-Item -Path $pswmExe -Destination $updaterExe -Force
     Write-Success "pswm_updater.exe sincronizado a v$pswmVersion"
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
-    Write-Info "Error sincronizando updater: $_"
+    Write-Info "Error sincronizando updater por version: $_"
   }
 }
 
@@ -1729,8 +1764,8 @@ function Invoke-Iterate {
     Write-Info "Error comprobando actualizaciones: $_ (continuando)"
   }
 
-  # ---- Post-iteracion: Sincronizar pswm_updater.exe si iteracion limpia ----
-  if (-not $script:IterationHadErrors -and (Test-IsCompiled)) {
+  # ---- Post-iteracion: Sincronizar pswm_updater.exe (siempre, con o sin errores) ----
+  if (Test-IsCompiled) {
     try {
       Sync-UpdaterBinary
     } catch {

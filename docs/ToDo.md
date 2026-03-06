@@ -10,6 +10,8 @@ IMPORTANTE: No te olvides de marcar en este archivo va inmplementación realizad
 
 Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas mejoras o correcciones e implementalas, segun los criterios indicados anteriormente.
 
+No tienes que modificar el contenido, mas que para marcarlo como hecho, si quieres puedes añadir algo bajo el punto que corresponda comentarios que empiecen por # 
+
 ---
 
 + Agrega al agente el comando svc, que lo que hace es llamar periodicamente al comando pswm.exe en su mismo directorio:
@@ -126,3 +128,13 @@ Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas m
 > Implementa tanto las opciones en el server, la web console, y en el agente.
 > En el agente hay que tener en cuenta que se puede hacer mediante linea de comandos desatendido, y mediante gui, en el cual ya tenemos 2 metodos, por lo que hay que añadir algo para que el usuario seleccione el método.
 > Implementado: tabla enrollment_tokens en db.js (token, org, location, max_uses, expires_at, revoked). 4 endpoints en agents.js (GET/POST tokens, DELETE revoke, POST register/token). Web console: sección "Tokens de Registro" en página de cola con crear/revocar/copiar y tabla completa. Agente: comando reg_token (CLI con -Token param), función Invoke-RegToken, GUI con selector RadioButton Cola/Token y campo token.
+
+- En la webconsole , en la "Cola de Aprobación de Agentes" quiero que cambies la estructura, "Cola de Aprobación de Agentes" y "Tokens" , separados en Tabs.
+> Para ambos añade paginación de 20 items, pero que permita seleccionar en un desplegable otras paginaciones de 50,100, y 200
+- Tambien quiero que se puedan editar los Tokens, para:
+> Aumentar los usos
+> Cambiar la caducidad
+> Cambiar la ubicacion
+> Cambiar la descripcion
+> El resto igual
+- En Configuración tambien quiero que lo reordenes usando tabs.
