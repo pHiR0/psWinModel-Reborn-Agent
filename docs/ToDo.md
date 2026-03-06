@@ -189,3 +189,6 @@ No tienes que modificar el contenido, nada mas que para marcarlo como hecho, si 
 > Implementado: La causa era que fetch('/api/settings') usaba URL relativa (puerto 5173 en lugar de 3000) y el Promise.all completo fallaba. Solucionado: (1) agents+orgs se cargan en un Promise.all separado, (2) settings se carga después en su propio try/catch sin bloquear, (3) inactiveThresholdDays default cambiado a 0 para no filtrar hasta que se cargue el valor real.
 + En el nuevo selector de "Org/Ubicacion" no está bien implementado, sale un popup, dejando el fondo negro y el popup dice "Filtrar por Org / Ubicacion" y debajo "Sin Organizaciones" y esto es falso, quiero que el popup que se muestre sea el mismo que usamos, dentro de los despliegues, cuando editamos uno de tipo location, el popup que se despliega para "Seleccionar Organización y Ubicacion"
 > Implementado: modal reemplazado por layout grid 3 columnas (igual que despliegues): columna izquierda = lista de organizaciones con botón "Sólo" en hover; columna derecha = TreeNode lazy de ubicaciones de la org activa.
+
+- Quiero que a los despliegues se les añada un icono para diferenciarlos segun el Objetivo que son "Todos", "Grupos","Organizaciones","Localizaciones","Agentes"
+- Tambien en los despliegues la columna "Objetivos", no me aporta nada la ocultamos.
