@@ -93,13 +93,36 @@ Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas m
 > Otro ejemplo si un equipo hace 1 año que no itera, y vuelve a iterar justo despues de un año, mantendrá la del dia mas reciente, de las antiguas iteraciones hasta contabilizar 3 dias, pero ten en cuenta no son 3 dias de tiempo, sino iteraciones de 3 dias , evidentemente todas y cada una de las iteraciones que hayan sucedido en cad uno de esos dias.
 > Implementado: GET/PUT /api/settings con clave retention_days (1-30, default 7). Algoritmo applyRetention por agente: obtiene fechas únicas de started_at (desc), conserva las N primeras, elimina el resto. Se ejecuta automáticamente tras cada script run y manualmente desde POST /api/settings/retention/apply. Página /settings en webconsole con slider y botón "Aplicar Retención Ahora".
 
-- Cuando subo un pswm.exe al servidor quiero que sea el propio servidor quien determine la version a partir del fileinfo del archivo. No se si está implementado pero quiero que el servidor pueda alojar varias versiones del archivo, y la publico en 2 modos, mandatory, eso quiere decir que aunque el agente tenga una version superior a la publicada en el servidor, el agente debe "downgradear" a la version del server, y lueo en modo upgrade que quiere decir que el agente actualiza la version solo si la del servidor es mayo a la que el tiene, si son iguales o la del servidor es inferior entonces se queda con la que tiene.
++ Cuando subo un pswm.exe al servidor quiero que sea el propio servidor quien determine la version a partir del fileinfo del archivo. No se si está implementado pero quiero que el servidor pueda alojar varias versiones del archivo, y la publico en 2 modos, mandatory, eso quiere decir que aunque el agente tenga una version superior a la publicada en el servidor, el agente debe "downgradear" a la version del server, y lueo en modo upgrade que quiere decir que el agente actualiza la version solo si la del servidor es mayo a la que el tiene, si son iguales o la del servidor es inferior entonces se queda con la que tiene.
 > Tener varias versiones del pswm.exe en el servidor hace que sea necesario seleccionar cual es la que queremos publicar.
 > Tambien se me ocurre el modo desactivado, para que el servidor no proporcione actualizaciones mientras este modo esté activo.
 > Genera tambien los md5 o sha al subirlo
 > Implementado: Sistema multi-versión completo en el servidor (tabla agent_updates). Auto-detección de FileVersion vía PowerShell al subir .exe. Hashes SHA256+MD5 generados al subir. 3 modos de publicación: mandatory (fuerza downgrade), upgrade (solo mayor), disabled (sin actualizaciones). UI en /settings con tabla de versiones, botones publicar/despublicar/eliminar, selector de modo. Agente actualizado para respetar los modos del servidor.
 
-- En "Script Runs" no estoy viendo agrupadas las ejecuciones por el IterationID que implementamos antes. Corrigelo.
-- Si le doy a editar a una Organizacion no pasa nada
-- A los script  quiero que se les pueda asignar un orderID, a fin de cuando se sirvan todos los script se ejecuten en ese orden, si dos scripts tienen el mismo orderID, se determinan por otro parametro , que puede ser el nombre o el id, lo dejo a tu eleccion. Al final de todo se ejecutan los que no tengan asignado order id. Los primero que se ejecutan son los que tengan el order numérico mas bajo, valores de 0 en adelante.
-- Cuando ejecutamos el gui , si no es con permisos de administrador redirigir a ejecutarlo con privilegios elevados.
++ En "Script Runs" no estoy viendo agrupadas las ejecuciones por el IterationID que implementamos antes. Corrigelo.
+> Implementado: reescrita la lógica de agrupación en agents/[id]/+page.svelte. Se eliminó el @const inline (se recalculaba en cada render reseteando el estado de expansión). Ahora usa reactive block $: groupedRuns con mapas expandedIterations y expandedRuns independientes.
++ Si le doy a editar a una Organizacion no pasa nada
+> Implementado: la variable `editing` no estaba declarada con `let` en organizations/+page.svelte. Añadido `let editing: any = null;` que hacía que la función handleEdit no pudiese asignar el objeto y el formulario de edición nunca se mostraba.
++ A los script  quiero que se les pueda asignar un orderID, a fin de cuando se sirvan todos los script se ejecuten en ese orden, si dos scripts tienen el mismo orderID, se determinan por otro parametro , que puede ser el nombre o el id, lo dejo a tu eleccion. Al final de todo se ejecutan los que no tengan asignado order id. Los primero que se ejecutan son los que tengan el order numérico mas bajo, valores de 0 en adelante.
+> Implementado: columna order_id INTEGER en tabla scripts (db.js + migración automática). API scripts.js: GET ordena por (nulls al final, order_id ASC, name ASC); POST/PUT aceptan order_id. API deployments.js: endpoint del agente incluye script_order_id y ordena igual. Web console scripts/+page.svelte: campo "Orden de ejecución" en crear/editar, columna Orden en tabla. Desempate: name ASC, luego id ASC.
++ Cuando ejecutamos el gui , si no es con permisos de administrador redirigir a ejecutarlo con privilegios elevados.
+> Implementado: al inicio de Invoke-Gui se verifica IsInRole(Administrator). Si no se es admin se detecta si corre como .exe compilado o como script .ps1 y se relanza con Start-Process -Verb RunAs con los mismos argumentos (incluyendo -ServerUrl si aplica), luego hace return.
+
++ He ejecutado el gui por el metodo de doble click desde el explorador de windows y no ha solicitado la elevación de permisos.
+> Corregido: Se mueve Add-Type WinForms ANTES de la comprobación de admin para poder mostrar MessageBox en caso de error. Se envuelve Start-Process -Verb RunAs en try-catch con MessageBox para capturar errores de elevación (UAC denegado, etc.).
++ En "Scripts Runs" siguen sin estar agrupadas las ejecuciones, centrate en esto que ya es la tercera vez que te lo comento, todas la ejecuciones de una misma iteracion deben estar agrupadas dentro del mismo Comprimible.
+> Corregido (3ª vez): eliminado el bloque reactivo $: que no se disparaba correctamente. Ahora computeGroups() se llama directamente dentro de loadScriptRuns() tras asignar los datos, garantizando que los grupos se calculan siempre.
++ Quiero tambien que los Agentes tengan 2 campos editables, uno es el Owner y otro anotación.
+> El Owner es el dueño o persona asignada al equipo
+> Anotación es un pequeño texto libre.
+> Ambos quiero que aparezan en el listado de Agentes, pero bajo el nombre del Agente.
+> Implementado: columnas owner y annotation añadidas a tabla agents (con migración automática). PUT /api/agents/:id actualiza ambos campos. Listado de agentes muestra owner (👤) y annotation (📝) bajo el nombre. Detalles del agente muestra ambos. Página de edición incluye inputs para ambos.
++ Quiero que en los detalles del agente se muestre la IP del angente, no me refiero a la que recopile el propio agente sino a la IP desde donde hace la conexion contra el servidor.
+> Implementado: en facts.js se captura req.headers['x-forwarded-for'] || req.ip y se guarda en agents.last_ip. En detalles del agente se muestra como "IP remota".
++ Para unir agentes ahora mismo tenemos implementado el sistema de cola de aprobación de agentes, ahora quiero implementar un método por token.
+> Se genera un token, el token tendrá fecha de caducidad
+> Tambien puede tener opcionalmente numero de usos
+> El token hay que vincularlo a una organización y ubicación que es donde se vincularán los agentes que lo usen.
+> Implementa tanto las opciones en el server, la web console, y en el agente.
+> En el agente hay que tener en cuenta que se puede hacer mediante linea de comandos desatendido, y mediante gui, en el cual ya tenemos 2 metodos, por lo que hay que añadir algo para que el usuario seleccione el método.
+> Implementado: tabla enrollment_tokens en db.js (token, org, location, max_uses, expires_at, revoked). 4 endpoints en agents.js (GET/POST tokens, DELETE revoke, POST register/token). Web console: sección "Tokens de Registro" en página de cola con crear/revocar/copiar y tabla completa. Agente: comando reg_token (CLI con -Token param), función Invoke-RegToken, GUI con selector RadioButton Cola/Token y campo token.

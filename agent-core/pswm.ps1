@@ -5,6 +5,7 @@
 .DESCRIPTION
   Comandos disponibles:
     reg_init_check  - Registrar agente vÃ­a Cola de AprobaciÃ³n (si no hay agent_id)
+    reg_token       - Registrar agente vÃ­a Token de Registro (instantÃ¡neo, sin aprobaciÃ³n)
     check_status    - Verificar conectividad y estado del agente
     view_config     - Mostrar configuraciÃ³n actual
     gencert         - Generar/regenerar par de claves RSA
@@ -26,6 +27,7 @@ param(
   [string]$ServerUrl = $null,
   [Parameter(Position=1)]
   [string]$Arg1 = $null,
+  [string]$Token = $null,
   [string]$OutDir = "$env:ProgramData\pswm-reborn",
   [int]$KeySize = 2048,
   [int]$PollIntervalSeconds = 5
@@ -385,6 +387,91 @@ function Invoke-RegInitCheck {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Err "Error durante polling: $_"
     Exit-Cmd 1
+  }
+}
+
+function Invoke-RegToken {
+  Write-Info "Ejecutando reg_token (registro via Token)..."
+
+  # Token puede venir por -Token o como $Arg1
+  $tkn = if ($Token) { $Token } elseif ($Arg1) { $Arg1 } else { $null }
+  if (-not $tkn) {
+    Write-Err "Debe proporcionar un token de registro: pswm.exe reg_token -Token `"MI_TOKEN`" o pswm.exe reg_token `"MI_TOKEN`""
+    Exit-Cmd 1
+  }
+
+  if (-not (Test-Path $OutDir)) { 
+    New-Item -ItemType Directory -Path $OutDir -Force | Out-Null 
+    Write-Info "Directorio creado: $OutDir"
+  }
+
+  $cfg = Get-Config
+  if ($cfg -and $cfg.PSObject.Properties['agent_id'] -and $cfg.agent_id) {
+    Write-Success "Agente ya registrado con agent_id: $($cfg.agent_id)"
+    Write-Host "Ruta config: $script:ConfigPath"
+    Exit-Cmd 0
+  }
+
+  $srvUrl = Get-ServerUrl
+  Write-Info "Server URL: $srvUrl"
+
+  if (-not (Test-ServerReachable $srvUrl)) {
+    Write-Err "Servidor no accesible: $srvUrl"
+    Exit-Cmd 2
+  }
+  Write-Success "Servidor accesible"
+
+  # Generar claves si no existen
+  if (-not (Test-Path $script:PublicKeyPath) -or -not (Test-Path $script:PrivateKeyPath)) {
+    Write-Info "Generando par de claves RSA ($KeySize bits)..."
+    $kp = New-RsaKeyPairPem -bits $KeySize -privatePath $script:PrivateKeyPath -publicPath $script:PublicKeyPath
+    Write-Success "Claves generadas en: $OutDir"
+  } else {
+    Write-Info "Usando claves existentes"
+  }
+
+  # Leer clave publica
+  $pubKey = Get-Content $script:PublicKeyPath -Raw
+
+  # POST /api/agents/register/token
+  Write-Info "Enviando registro con token..."
+  try {
+    $body = @{
+      token      = $tkn
+      hostname   = $env:COMPUTERNAME
+      public_key = $pubKey
+    } | ConvertTo-Json -Compress
+
+    $resp = Invoke-RestMethod -Uri "$srvUrl/api/agents/register/token" `
+      -Method POST -ContentType 'application/json' -Body $body -ErrorAction Stop
+
+    if ($resp.agent -and $resp.agent.id) {
+      Write-Success "Agente registrado correctamente! Agent ID: $($resp.agent.id)"
+
+      $finalCfg = @{
+        agent_id      = $resp.agent.id
+        hostname      = $env:COMPUTERNAME
+        server_url    = $srvUrl
+        registered_via = 'token'
+        registered_at = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+      }
+      Save-Config $finalCfg
+      Write-Success "Configuracion guardada en: $script:ConfigPath"
+      Exit-Cmd 0
+    } else {
+      Write-Err "Respuesta inesperada del servidor: $($resp | ConvertTo-Json -Compress)"
+      Exit-Cmd 3
+    }
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    $errMsg = $_
+    # Intentar extraer mensaje del servidor
+    try {
+      $errBody = $_.ErrorDetails.Message | ConvertFrom-Json
+      if ($errBody.error) { $errMsg = $errBody.error }
+    } catch { }
+    Write-Err "Error al registrar con token: $errMsg"
+    Exit-Cmd 3
   }
 }
 
@@ -1695,8 +1782,46 @@ function Invoke-Gui {
     - Sin instalar/registrar: formulario de instalacion con URL del servidor.
     - Instalado y registrado : controles Start/Stop servicio + visor live de svc.log.
   #>
+
+  # Cargar WinForms ANTES de la comprobacion de admin para poder mostrar MessageBox si hay error
   Add-Type -AssemblyName System.Windows.Forms
   Add-Type -AssemblyName System.Drawing
+
+  # --- Verificar privilegios de administrador ---
+  $currentPrincipal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
+  $isAdmin = $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+  if (-not $isAdmin) {
+    try {
+      # Detectar si corremos como .exe compilado o como script .ps1
+      $exePath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+      $isCompiledExe = $exePath -notmatch 'powershell|pwsh' -and ($exePath -like '*.exe')
+      if ($isCompiledExe) {
+        $launchArgs = 'gui'
+        if ($script:ServerUrl) { $launchArgs += " -ServerUrl `"$script:ServerUrl`"" }
+        Start-Process -FilePath $exePath -ArgumentList $launchArgs -Verb RunAs
+      } else {
+        $scriptPath = $PSCommandPath
+        if (-not $scriptPath) { $scriptPath = $MyInvocation.ScriptName }
+        if (-not $scriptPath) {
+          # Fallback: usar ruta del script actual
+          $scriptPath = $MyInvocation.MyCommand.Definition
+        }
+        $launchArgs = "-ExecutionPolicy Bypass -File `"$scriptPath`" gui"
+        if ($script:ServerUrl) { $launchArgs += " -ServerUrl `"$script:ServerUrl`"" }
+        $psExe = (Get-Command pwsh -ErrorAction SilentlyContinue)
+        if (-not $psExe) { $psExe = (Get-Command powershell -ErrorAction SilentlyContinue) }
+        Start-Process -FilePath $psExe.Source -ArgumentList $launchArgs -Verb RunAs
+      }
+    } catch {
+      [System.Windows.Forms.MessageBox]::Show(
+        "No se pudo obtener privilegios de administrador.`n`nError: $_`n`nPor favor, ejecute pswm.exe como Administrador manualmente.",
+        'psWinModel Reborn - Error',
+        [System.Windows.Forms.MessageBoxButtons]::OK,
+        [System.Windows.Forms.MessageBoxIcon]::Error
+      ) | Out-Null
+    }
+    return
+  }
 
   $dataDir   = "$env:ProgramData\pswm-reborn"
   $svcLogPath = Join-Path $dataDir 'logs\svc.log'
@@ -1717,11 +1842,12 @@ function Invoke-Gui {
     # ---- Formulario de instalacion ----
     $form = New-Object System.Windows.Forms.Form
     $form.Text            = 'psWinModel Reborn - Instalacion'
-    $form.Size            = New-Object System.Drawing.Size(480, 220)
+    $form.Size            = New-Object System.Drawing.Size(500, 310)
     $form.StartPosition   = 'CenterScreen'
     $form.FormBorderStyle = 'FixedDialog'
     $form.MaximizeBox     = $false
 
+    # URL del servidor
     $lblUrl = New-Object System.Windows.Forms.Label
     $lblUrl.Text     = 'URL del servidor:'
     $lblUrl.Location = New-Object System.Drawing.Point(20, 20)
@@ -1730,31 +1856,83 @@ function Invoke-Gui {
     $txtUrl = New-Object System.Windows.Forms.TextBox
     $txtUrl.Text     = (Get-ServerUrl)
     $txtUrl.Location = New-Object System.Drawing.Point(150, 17)
-    $txtUrl.Size     = New-Object System.Drawing.Size(290, 20)
+    $txtUrl.Size     = New-Object System.Drawing.Size(310, 20)
 
+    # Metodo de registro
+    $lblMethod = New-Object System.Windows.Forms.Label
+    $lblMethod.Text     = 'Metodo de registro:'
+    $lblMethod.Location = New-Object System.Drawing.Point(20, 52)
+    $lblMethod.Size     = New-Object System.Drawing.Size(130, 20)
+
+    $rbQueue = New-Object System.Windows.Forms.RadioButton
+    $rbQueue.Text     = 'Cola de Aprobacion'
+    $rbQueue.Location = New-Object System.Drawing.Point(150, 50)
+    $rbQueue.Size     = New-Object System.Drawing.Size(155, 20)
+    $rbQueue.Checked  = $true
+
+    $rbToken = New-Object System.Windows.Forms.RadioButton
+    $rbToken.Text     = 'Token de Registro'
+    $rbToken.Location = New-Object System.Drawing.Point(310, 50)
+    $rbToken.Size     = New-Object System.Drawing.Size(150, 20)
+
+    # Campo de token (solo visible si se selecciona Token)
+    $lblToken = New-Object System.Windows.Forms.Label
+    $lblToken.Text     = 'Token:'
+    $lblToken.Location = New-Object System.Drawing.Point(20, 82)
+    $lblToken.Size     = New-Object System.Drawing.Size(120, 20)
+    $lblToken.Visible  = $false
+
+    $txtToken = New-Object System.Windows.Forms.TextBox
+    $txtToken.Location = New-Object System.Drawing.Point(150, 79)
+    $txtToken.Size     = New-Object System.Drawing.Size(310, 20)
+    $txtToken.Visible  = $false
+
+    # Toggle visibilidad del campo token segun seleccion
+    $rbToken.Add_CheckedChanged({
+      $lblToken.Visible = $rbToken.Checked
+      $txtToken.Visible = $rbToken.Checked
+    })
+
+    # Label de estado
     $lblStatus = New-Object System.Windows.Forms.Label
     $lblStatus.Text      = ''
-    $lblStatus.Location  = New-Object System.Drawing.Point(20, 100)
-    $lblStatus.Size      = New-Object System.Drawing.Size(430, 40)
+    $lblStatus.Location  = New-Object System.Drawing.Point(20, 160)
+    $lblStatus.Size      = New-Object System.Drawing.Size(440, 60)
     $lblStatus.ForeColor = [System.Drawing.Color]::DarkBlue
 
+    # Boton instalar
     $btnInstall = New-Object System.Windows.Forms.Button
     $btnInstall.Text     = 'Instalar'
-    $btnInstall.Location = New-Object System.Drawing.Point(170, 55)
+    $btnInstall.Location = New-Object System.Drawing.Point(180, 115)
     $btnInstall.Size     = New-Object System.Drawing.Size(130, 30)
 
     $btnInstall.Add_Click({
       $btnInstall.Enabled = $false
-      $lblStatus.Text     = 'Registrando agente...'
+      $lblStatus.ForeColor = [System.Drawing.Color]::DarkBlue
+
+      $useToken = $rbToken.Checked
+      if ($useToken -and -not $txtToken.Text.Trim()) {
+        $lblStatus.Text      = 'Debe introducir un token de registro.'
+        $lblStatus.ForeColor = [System.Drawing.Color]::Red
+        $btnInstall.Enabled  = $true
+        return
+      }
+
+      $lblStatus.Text = 'Registrando agente...'
       $form.Refresh()
 
       $script:GuiMode = $true   # desactiva exit, usa throw "EXIT:N"
 
-      # --- Paso 1: reg_init_check ---
+      # --- Paso 1: registro (cola o token) ---
       $regOk = $false
       try {
         $script:ServerUrl = $txtUrl.Text.Trim()
-        Invoke-RegInitCheck
+        if ($useToken) {
+          $script:Token = $txtToken.Text.Trim()
+          Invoke-RegToken
+        } else {
+          Invoke-RegInitCheck
+        }
         $regOk = $true
       } catch {
         if ("$_" -match 'EXIT:(\d+)') {
@@ -1799,7 +1977,7 @@ function Invoke-Gui {
       $script:GuiMode = $false  # restaurar modo normal
     })
 
-    $form.Controls.AddRange(@($lblUrl, $txtUrl, $btnInstall, $lblStatus))
+    $form.Controls.AddRange(@($lblUrl, $txtUrl, $lblMethod, $rbQueue, $rbToken, $lblToken, $txtToken, $btnInstall, $lblStatus))
     [void]$form.ShowDialog()
 
   } else {
@@ -1958,6 +2136,7 @@ Uso: pswm.exe <comando> [opciones]
 
 Comandos disponibles:
   reg_init_check      Registrar agente via Cola de Aprobacion (genera claves si necesario)
+  reg_token           Registrar agente via Token de Registro (uso: reg_token -Token "xxx" o reg_token "xxx")
   check_status        Verificar conectividad y estado del agente
   view_config         Mostrar configuracion actual (config.json)
   archive_config      Archivar config + claves a ZIP y eliminar originales
@@ -1979,6 +2158,7 @@ Comandos disponibles:
 
 Opciones comunes:
   -ServerUrl <url>           URL del servidor (default: desde config o http://localhost:3000)
+  -Token <string>            Token de registro (para reg_token)
   -OutDir <path>             Directorio de datos (default: \$env:ProgramData\pswm-reborn)
   -KeySize <bits>            Tamano de clave RSA (default: 2048)
   -PollIntervalSeconds <n>   Intervalo de polling en segundos (default: 5)
@@ -1986,6 +2166,8 @@ Opciones comunes:
 Ejemplos:
   pswm.exe reg_init_check
   pswm.exe reg_init_check -ServerUrl https://mi-servidor.com
+  pswm.exe reg_token -Token "mi-token-aqui"
+  pswm.exe reg_token "mi-token" -ServerUrl https://mi-servidor.com
   pswm.exe archive_config "backup-20260117"
   pswm.exe restore_config "backup-20260117"
   pswm.exe check_status
@@ -2008,6 +2190,7 @@ Ejemplos:
 
 switch ($Command.ToLower()) {
   "reg_init_check"    { Invoke-RegInitCheck }
+  "reg_token"          { Invoke-RegToken }
   "check_status"      { Invoke-CheckStatus }
   "view_config"       { Invoke-ViewConfig }
   "archive_config"    { Invoke-ArchiveConfig -Name $Arg1 }
