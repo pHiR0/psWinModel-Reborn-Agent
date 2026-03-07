@@ -1010,6 +1010,7 @@ function Invoke-UninstallService {
 #region Iterate - Bucle operativo completo
 
 function Collect-Facts {
+  param([string]$serverUrl = '', [int]$agentId = 0)
   <# Recopila facts del equipo local y los devuelve como array de hashtables. #>
   $facts = @()
 
@@ -1130,6 +1131,56 @@ function Collect-Facts {
       $facts += @{ fact_key = 'uptime'; value = ($uptimeObj | ConvertTo-Json -Compress -Depth 2); source = 'agent' }
     }
   } catch { }
+
+  # --- Chocolatey (fact built-in) ---
+  try {
+    $chocoExe = Get-ChocoExePath
+    if ($chocoExe) {
+      $chocoVersion  = (Get-Item $chocoExe).VersionInfo.FileVersion
+      $chocoSources  = Get-ChocoSources -chocoExe $chocoExe
+      $chocoFeatures = Get-ChocoFeatures -chocoExe $chocoExe
+
+      # Obtener lastUpdate y perfil desde el servidor (best-effort)
+      $lastUpdate  = $null
+      $profileObj  = $null
+      if ($serverUrl -and $agentId -gt 0) {
+        try {
+          $resolved = Get-ResolvedChocoConfig -serverUrl $serverUrl -agentId $agentId
+          if ($resolved) {
+            $lastUpdate = $resolved.last_update
+            $p = $resolved.profile
+            if ($p) {
+              $profileObj = @{
+                name                = $p.name
+                description         = $p.description
+                UpdateMode          = $p.update_mode
+                UpdateFrecuencyDays = $p.upgrade_frequency_days
+                Chocolatey_Policy   = $p.choco_self_policy
+              }
+            }
+          }
+        } catch { }
+      }
+
+      $chocoConfig = Get-ChocoConfig -chocoExe $chocoExe
+
+      $chocoFact = @{
+        installed  = $true
+        exe        = $chocoExe
+        version    = $chocoVersion
+        sources    = $chocoSources
+        features   = $chocoFeatures
+        config     = $chocoConfig
+        lastUpdate = $lastUpdate
+        profile    = $profileObj
+      }
+      $facts += @{ fact_key = 'chocolatey'; value = ($chocoFact | ConvertTo-Json -Compress -Depth 5); source = 'agent' }
+    } else {
+      $facts += @{ fact_key = 'chocolatey'; value = '{"installed": false}'; source = 'agent' }
+    }
+  } catch {
+    $facts += @{ fact_key = 'chocolatey'; value = '{"installed": false, "error": "' + "$_".Replace('"','\"') + '"}'; source = 'agent' }
+  }
 
   # --- External facts (scripts .ps1 en external_facts/) ---
   $extDir = Join-Path $OutDir 'external_facts'
@@ -1322,190 +1373,455 @@ function Send-ScriptRun(
   }
 }
 
-function Get-PendingChocoDeployments([string]$serverUrl, [int]$agentId) {
-  $uri = "$serverUrl/api/choco/deployments/agent/$agentId"
+function Get-ResolvedChocoConfig([string]$serverUrl, [int]$agentId) {
+  <# Obtiene la configuración choco resuelta (merged) para este agente #>
+  $uri = "$serverUrl/api/choco/resolved/$agentId"
   try {
     $res = Invoke-RestMethod -Uri $uri -Method Get -ErrorAction Stop
-    return @($res.deployments)  # cada elemento tiene: deployment_group_id, profile, packages[]
+    return $res.resolved  # { profile, packages, last_update }
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
-    Write-Err "Error obteniendo choco deployments: $_"
-    return @()
+    Write-Err "Error obteniendo choco config resuelta: $_"
+    return $null
   }
 }
 
-function Apply-ChocoProfile([object]$profile) {
-  <# Aplica un perfil Chocolatey: settings, sources, update mode, choco self policy #>
-  if (-not $profile) { return }
+function Get-ChocoExePath {
+  $exe = (Get-Command choco -ErrorAction SilentlyContinue).Source
+  if (-not $exe) { $exe = "$env:ProgramData\chocolatey\bin\choco.exe" }
+  if (Test-Path $exe) { return $exe }
+  return $null
+}
 
-  $chocoExe = (Get-Command choco -ErrorAction SilentlyContinue).Source
-  if (-not $chocoExe) { $chocoExe = "$env:ProgramData\chocolatey\bin\choco.exe" }
-  if (-not (Test-Path $chocoExe)) {
-    Write-Info "Chocolatey no instalado, no se puede aplicar perfil."
-    return
-  }
+# ─── Colectores de estado actual ───
 
-  # Aplicar settings (array de {key, value})
+function Get-ChocoInstalledPackages([string]$chocoExe) {
+  <# Devuelve hashtable: nombre -> version #>
+  $result = @{}
   try {
-    $settings = @()
-    if ($profile.settings_json -and $profile.settings_json -ne '[]') {
-      $settings = $profile.settings_json | ConvertFrom-Json -ErrorAction SilentlyContinue
-    }
-    foreach ($s in $settings) {
-      if ($s.key) {
-        Write-Info "    choco config set $($s.key) = $($s.value)"
-        & $chocoExe config set --name="$($s.key)" --value="$($s.value)" -y 2>&1 | Out-Null
+    $raw = & $chocoExe list -r 2>$null
+    foreach ($line in $raw) {
+      if ($line -match '^(.+?)\|(.+)$') {
+        $result[$matches[1].ToLower()] = $matches[2]
       }
     }
-  } catch {
-    if ("$_" -match "^EXIT:\d+$") { throw }
-    Write-Info "    Error aplicando settings del perfil: $_"
-  }
+  } catch { Write-Info "Error listando paquetes instalados: $_" }
+  return $result
+}
 
-  # Aplicar sources (array de {name, url, priority, disabled})
+function Get-ChocoPinnedPackages([string]$chocoExe) {
+  <# Devuelve hashset de nombres de paquetes fijados #>
+  $result = @{}
   try {
-    $sources = @()
-    if ($profile.sources_json -and $profile.sources_json -ne '[]') {
-      $sources = $profile.sources_json | ConvertFrom-Json -ErrorAction SilentlyContinue
+    $raw = & $chocoExe pin list -r 2>$null
+    foreach ($line in $raw) {
+      if ($line -match '^(.+?)\|') {
+        $result[$matches[1].ToLower()] = $true
+      }
     }
-    foreach ($src in $sources) {
-      if ($src.name -and $src.url) {
-        Write-Info "    choco source add/update: $($src.name) -> $($src.url)"
-        # Remover si existe para re-crear con las opciones correctas
-        & $chocoExe source remove --name="$($src.name)" -y 2>&1 | Out-Null
-        $srcArgs = "source add --name=`"$($src.name)`" --source=`"$($src.url)`" -y"
-        if ($src.priority) { $srcArgs += " --priority=$($src.priority)" }
-        & $chocoExe $srcArgs.Split(' ') 2>&1 | Out-Null
-        if ($src.disabled) {
-          & $chocoExe source disable --name="$($src.name)" -y 2>&1 | Out-Null
+  } catch { Write-Info "Error listando paquetes pinned: $_" }
+  return $result
+}
+
+function Get-ChocoSources([string]$chocoExe) {
+  <# Devuelve hashtable: nombre -> { url, priority, disabled } #>
+  $result = @{}
+  try {
+    $raw = & $chocoExe source list -r 2>$null
+    foreach ($line in $raw) {
+      $parts = $line -split '\|'
+      if ($parts.Count -ge 2) {
+        $result[$parts[0]] = @{
+          url      = $parts[1]
+          disabled = if ($parts.Count -ge 3 -and $parts[2] -eq 'True') { $true } else { $false }
+          priority = if ($parts.Count -ge 5) { [int]$parts[4] } else { 0 }
         }
       }
     }
-  } catch {
-    if ("$_" -match "^EXIT:\d+$") { throw }
-    Write-Info "    Error aplicando sources del perfil: $_"
-  }
-
-  # Choco self policy: upgrade o pin
-  try {
-    $selfPolicy = $profile.choco_self_policy
-    if ($selfPolicy -eq 'upgrade') {
-      Write-Info "    choco upgrade chocolatey -y"
-      & $chocoExe upgrade chocolatey -y 2>&1 | Out-Null
-    } elseif ($selfPolicy -eq 'pin') {
-      Write-Info "    choco pin add --name=chocolatey"
-      & $chocoExe pin add --name=chocolatey 2>&1 | Out-Null
-    }
-    # 'ignore' = no hacer nada
-  } catch {
-    if ("$_" -match "^EXIT:\d+$") { throw }
-    Write-Info "    Error aplicando choco self policy: $_"
-  }
-
-  # Update mode: upgrade-all
-  try {
-    $updateMode = $profile.update_mode
-    if ($updateMode -eq 'upgrade-all') {
-      Write-Info "    choco upgrade all -y (modo upgrade-all)"
-      & $chocoExe upgrade all -y 2>&1 | Out-Null
-    }
-    # 'managed-only' se maneja por los paquetes del deployment
-    # 'disabled' = no hacer nada
-  } catch {
-    if ("$_" -match "^EXIT:\d+$") { throw }
-    Write-Info "    Error en update mode: $_"
-  }
-
-  Write-Info "    Perfil '$($profile.name)' aplicado"
+  } catch { Write-Info "Error listando sources: $_" }
+  return $result
 }
 
-function Execute-ChocoDeployment([object]$deployment, [string]$serverUrl, [int]$agentId) {
-  <# Ejecuta un deployment group completo: aplica perfil + instala/actualiza/desinstala paquetes #>
-  $groupId = $deployment.deployment_group_id
-  $hadErrors = $false
+function Get-ChocoConfig([string]$chocoExe) {
+  <# Devuelve hashtable: key -> value #>
+  $result = @{}
+  try {
+    $raw = & $chocoExe config list -r 2>$null
+    foreach ($line in $raw) {
+      # choco config list -r produce: key|value|descripcion
+      $parts = $line -split '\|'
+      if ($parts.Count -ge 2) {
+        $result[$parts[0]] = $parts[1]
+      }
+    }
+  } catch { Write-Info "Error listando config: $_" }
+  return $result
+}
 
-  # 1. Aplicar perfil si existe
-  if ($deployment.profile) {
-    Write-Info "  Aplicando perfil Chocolatey '$($deployment.profile.name)'..."
-    Apply-ChocoProfile -profile $deployment.profile
-  }
+function Get-ChocoFeatures([string]$chocoExe) {
+  <# Devuelve hashtable: nombre -> enabled(bool) #>
+  $result = @{}
+  try {
+    $raw = & $chocoExe feature list -r 2>$null
+    foreach ($line in $raw) {
+      # choco feature list -r produce: nombre|Enabled|descripcion  o  nombre|Disabled|descripcion
+      $parts = $line -split '\|'
+      if ($parts.Count -ge 2) {
+        $featureName    = $parts[0]
+        $featureEnabled = ($parts[1] -eq 'Enabled' -or $parts[1] -eq 'True')
+        $result[$featureName] = $featureEnabled
+      }
+    }
+  } catch { Write-Info "Error listando features: $_" }
+  return $result
+}
 
-  # 2. Procesar cada paquete del deployment
-  $packages = @($deployment.packages)
-  if (-not $packages -or $packages.Count -eq 0) {
-    Write-Info "  No hay paquetes en este deployment group"
-    return 0
-  }
+function Get-ChocoOutdated([string]$chocoExe) {
+  <# Devuelve hashtable: nombre -> available_version #>
+  $result = @{}
+  try {
+    $raw = & $chocoExe outdated -r 2>$null
+    foreach ($line in $raw) {
+      $parts = $line -split '\|'
+      if ($parts.Count -ge 3) {
+        $result[$parts[0].ToLower()] = $parts[2]  # available version
+      }
+    }
+  } catch { Write-Info "Error consultando outdated: $_" }
+  return $result
+}
 
-  $chocoExe = (Get-Command choco -ErrorAction SilentlyContinue).Source
-  if (-not $chocoExe) { $chocoExe = "$env:ProgramData\chocolatey\bin\choco.exe" }
-  if (-not (Test-Path $chocoExe)) {
-    Write-Err "  Chocolatey no instalado, no se pueden procesar paquetes."
+# ─── Ejecución por fases (diff-based) ───
+
+function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId, [string]$iterationId) {
+  <#
+  .SYNOPSIS
+    Ejecuta la configuración choco resuelta para este agente de forma inteligente:
+    1. Recolecta estado actual
+    2. Diff y aplica sources
+    3. Diff y aplica features
+    4. Diff y aplica config (settings)
+    5. Desinstalar paquetes marcados como uninstall
+    6. Instalar paquetes marcados como install que no están ya instalados
+    7. Ajustar pins
+    8. Actualizar si la frecuencia lo permite
+  #>
+  $profile = $resolved.profile
+  $packages = @($resolved.packages)
+
+  $chocoExe = Get-ChocoExePath
+  if (-not $chocoExe) {
+    Write-Info "  Chocolatey no instalado, no se puede procesar configuración."
     return -1
   }
 
-  foreach ($pkg in $packages) {
-    $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
-    $action = $pkg.action
-    $pkgName = $pkg.package_name
-    $ver = $pkg.version
-    $chParams = $pkg.params
+  $hadErrors = $false
 
-    $chocoArgs = ''
-    switch ($action) {
-      'install'   { $chocoArgs = "install $pkgName -y" }
-      'upgrade'   { $chocoArgs = "upgrade $pkgName -y" }
-      'uninstall' { $chocoArgs = "uninstall $pkgName -y" }
-      default     { $chocoArgs = "install $pkgName -y" }
+  # Recolectar estado actual
+  Write-Info "  Recolectando estado actual de Chocolatey..."
+  $installedPkgs = Get-ChocoInstalledPackages -chocoExe $chocoExe
+  $pinnedPkgs    = Get-ChocoPinnedPackages -chocoExe $chocoExe
+  $currentSources  = Get-ChocoSources -chocoExe $chocoExe
+  $currentConfig   = Get-ChocoConfig -chocoExe $chocoExe
+  $currentFeatures = Get-ChocoFeatures -chocoExe $chocoExe
+
+  Write-Info "  Estado: $($installedPkgs.Count) paquetes, $($pinnedPkgs.Count) pins, $($currentSources.Count) sources, $($currentFeatures.Count) features"
+
+  # ── Fase 1: Sources ──
+  if ($profile -and $profile.sources) {
+    Write-Info "  Fase 1: Sincronizando sources..."
+    $desiredSources = $profile.sources  # PSCustomObject: name -> {url, priority, disabled, user, pass}
+    foreach ($srcProp in @($desiredSources.PSObject.Properties)) {
+      $srcName = $srcProp.Name
+      $desired = $srcProp.Value
+      $current = $currentSources[$srcName]
+      $needUpdate = $false
+      if (-not $current) {
+        $needUpdate = $true
+        Write-Info "    Source '$srcName': NUEVA"
+      } elseif ($current.url -ne $desired.url -or $current.priority -ne $desired.priority -or $current.disabled -ne $desired.disabled) {
+        $needUpdate = $true
+        Write-Info "    Source '$srcName': ACTUALIZAR"
+      }
+      if ($needUpdate) {
+        $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+        try {
+          & $chocoExe source remove --name="$srcName" -y 2>&1 | Out-Null
+          $addArgs = @('source', 'add', "--name=$srcName", "--source=$($desired.url)", '-y')
+          if ($desired.priority) { $addArgs += "--priority=$($desired.priority)" }
+          if ($desired.user) { $addArgs += "--user=$($desired.user)"; $addArgs += "--password=$($desired.pass)" }
+          & $chocoExe @addArgs 2>&1 | Out-Null
+          if ($desired.disabled) {
+            & $chocoExe source disable --name="$srcName" -y 2>&1 | Out-Null
+          }
+          Write-Info "    Source '$srcName' aplicada"
+        } catch {
+          if ("$_" -match "^EXIT:\d+$") { throw }
+          Write-Info "    Error aplicando source '$srcName': $_"
+          $hadErrors = $true
+        }
+        $finishedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+        Send-ChocoRun -serverUrl $serverUrl -agentId $agentId -packageName "source:$srcName" -actionName 'config' `
+          -startedAt $startedAt -finishedAt $finishedAt -exitCode 0 -iterationId $iterationId
+      }
     }
-    if ($ver -and $ver -ne 'latest') { $chocoArgs += " --version=$ver" }
-    if ($chParams) { $chocoArgs += " $chParams" }
+  }
 
-    $stdoutVal = ''; $stderrVal = ''; $exitCodeVal = -1; $errorMsg = $null
-    try {
-      Write-Info "  choco $chocoArgs"
-      $psi = New-Object System.Diagnostics.ProcessStartInfo
-      $psi.FileName  = $chocoExe
-      $psi.Arguments = $chocoArgs
-      $psi.UseShellExecute = $false
-      $psi.CreateNoWindow  = $true
-      $psi.RedirectStandardOutput = $true
-      $psi.RedirectStandardError  = $true
+  # ── Fase 2: Features ──
+  if ($profile -and $profile.features) {
+    Write-Info "  Fase 2: Sincronizando features..."
+    $desiredFeatures = $profile.features  # PSCustomObject: name -> enabled(bool)
+    foreach ($fProp in @($desiredFeatures.PSObject.Properties)) {
+      $fName = $fProp.Name
+      $desired = [bool]$fProp.Value
+      $current = $currentFeatures[$fName]
+      if ($null -eq $current -or $current -ne $desired) {
+        $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+        try {
+          if ($desired) {
+            Write-Info "    choco feature enable --name=$fName"
+            & $chocoExe feature enable --name="$fName" -y 2>&1 | Out-Null
+          } else {
+            Write-Info "    choco feature disable --name=$fName"
+            & $chocoExe feature disable --name="$fName" -y 2>&1 | Out-Null
+          }
+        } catch {
+          if ("$_" -match "^EXIT:\d+$") { throw }
+          Write-Info "    Error aplicando feature '$fName': $_"
+          $hadErrors = $true
+        }
+        $finishedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+        Send-ChocoRun -serverUrl $serverUrl -agentId $agentId -packageName "feature:$fName" -actionName 'config' `
+          -startedAt $startedAt -finishedAt $finishedAt -exitCode 0 -iterationId $iterationId
+      }
+    }
+  }
 
-      $proc = [System.Diagnostics.Process]::Start($psi)
-      $stdoutVal = $proc.StandardOutput.ReadToEnd()
-      $stderrVal = $proc.StandardError.ReadToEnd()
-      [void]$proc.WaitForExit(600000) # timeout 10min
-      $exitCodeVal = $proc.ExitCode
-    } catch {
-      if ("$_" -match "^EXIT:\d+$") { throw }
-      $errorMsg = "$_"
+  # ── Fase 3: Config (settings) ──
+  if ($profile -and $profile.settings) {
+    Write-Info "  Fase 3: Sincronizando configuración..."
+    $desiredSettings = $profile.settings  # PSCustomObject: key -> value
+    foreach ($sProp in @($desiredSettings.PSObject.Properties)) {
+      $sKey = $sProp.Name
+      $desired = $sProp.Value
+      $current = $currentConfig[$sKey]
+      if ($current -ne $desired) {
+        $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+        try {
+          Write-Info "    choco config set --name=$sKey --value=$desired"
+          & $chocoExe config set --name="$sKey" --value="$desired" -y 2>&1 | Out-Null
+        } catch {
+          if ("$_" -match "^EXIT:\d+$") { throw }
+          Write-Info "    Error aplicando config '$sKey': $_"
+          $hadErrors = $true
+        }
+        $finishedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+        Send-ChocoRun -serverUrl $serverUrl -agentId $agentId -packageName "config:$sKey" -actionName 'config' `
+          -startedAt $startedAt -finishedAt $finishedAt -exitCode 0 -iterationId $iterationId
+      }
+    }
+  }
+
+  # ── Fase 4: Choco self policy ──
+  if ($profile -and $profile.choco_self_policy) {
+    $selfPolicy = $profile.choco_self_policy
+    if ($selfPolicy -eq 'upgrade') {
+      $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+      Write-Info "  choco upgrade chocolatey -y"
+      try {
+        & $chocoExe upgrade chocolatey -y 2>&1 | Out-Null
+      } catch { if ("$_" -match "^EXIT:\d+$") { throw }; Write-Info "    Error: $_"; $hadErrors = $true }
+      $finishedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+      Send-ChocoRun -serverUrl $serverUrl -agentId $agentId -packageName 'chocolatey' -actionName 'upgrade' `
+        -startedAt $startedAt -finishedAt $finishedAt -exitCode 0 -iterationId $iterationId
+    } elseif ($selfPolicy -eq 'pin') {
+      $isPinned = $pinnedPkgs.ContainsKey('chocolatey')
+      if (-not $isPinned) {
+        Write-Info "  choco pin add --name=chocolatey"
+        try { & $chocoExe pin add --name=chocolatey 2>&1 | Out-Null } catch { if ("$_" -match "^EXIT:\d+$") { throw } }
+      }
+    }
+  }
+
+  # ── Fase 5: Desinstalar paquetes marcados como uninstall ──
+  $uninstallPkgs = @($packages | Where-Object { $_.action -eq 'uninstall' })
+  if ($uninstallPkgs.Count -gt 0) {
+    Write-Info "  Fase 5: Desinstalando $($uninstallPkgs.Count) paquete(s)..."
+    foreach ($pkg in $uninstallPkgs) {
+      $pkgNameLower = $pkg.package_name.ToLower()
+      if (-not $installedPkgs.ContainsKey($pkgNameLower)) {
+        Write-Info "    $($pkg.package_name) no está instalado, saltando"
+        continue
+      }
+      $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+      # Si está pinned, desfijar primero
+      if ($pinnedPkgs.ContainsKey($pkgNameLower)) {
+        Write-Info "    Desfijando $($pkg.package_name) antes de desinstalar"
+        try { & $chocoExe pin remove --name="$($pkg.package_name)" -y 2>&1 | Out-Null } catch { if ("$_" -match "^EXIT:\d+$") { throw } }
+      }
+      $exitCodeVal = Run-ChocoCmd -chocoExe $chocoExe -cmdArgs "uninstall $($pkg.package_name) -y" `
+        -serverUrl $serverUrl -agentId $agentId -packageName $pkg.package_name -action 'uninstall' `
+        -startedAt $startedAt -iterationId $iterationId
+      if ($exitCodeVal -ne 0) { $hadErrors = $true }
+    }
+  }
+
+  # ── Fase 6: Instalar paquetes marcados como install que no están instalados ──
+  $installPkgs = @($packages | Where-Object { $_.action -eq 'install' })
+  if ($installPkgs.Count -gt 0) {
+    Write-Info "  Fase 6: Instalando paquetes..."
+    foreach ($pkg in $installPkgs) {
+      $pkgNameLower = $pkg.package_name.ToLower()
+      if ($installedPkgs.ContainsKey($pkgNameLower)) {
+        Write-Info "    $($pkg.package_name) ya instalado (v$($installedPkgs[$pkgNameLower])), saltando instalación"
+        continue
+      }
+      $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+      $installArgs = "install $($pkg.package_name) -y"
+      if ($pkg.version -and $pkg.version -ne 'latest') { $installArgs += " --version=$($pkg.version)" }
+      if ($pkg.params) { $installArgs += " $($pkg.params)" }
+      $exitCodeVal = Run-ChocoCmd -chocoExe $chocoExe -cmdArgs $installArgs `
+        -serverUrl $serverUrl -agentId $agentId -packageName $pkg.package_name -action 'install' `
+        -startedAt $startedAt -iterationId $iterationId
+      if ($exitCodeVal -ne 0) { $hadErrors = $true }
+      # Pin inmediato si corresponde
+      if ($pkg.pinned -and $exitCodeVal -eq 0) {
+        try { & $chocoExe pin add --name="$($pkg.package_name)" -y 2>&1 | Out-Null } catch { if ("$_" -match "^EXIT:\d+$") { throw } }
+      }
+    }
+  }
+
+  # ── Fase 7: Ajustar pins en paquetes ya instalados ──
+  Write-Info "  Fase 7: Ajustando pins..."
+  # Refrescar lista de pins
+  $pinnedPkgs = Get-ChocoPinnedPackages -chocoExe $chocoExe
+  foreach ($pkg in $installPkgs) {
+    $pkgNameLower = $pkg.package_name.ToLower()
+    if (-not $installedPkgs.ContainsKey($pkgNameLower)) { continue }
+    $isPinned = $pinnedPkgs.ContainsKey($pkgNameLower)
+    if ($pkg.pinned -and -not $isPinned) {
+      Write-Info "    Pin add: $($pkg.package_name)"
+      try { & $chocoExe pin add --name="$($pkg.package_name)" -y 2>&1 | Out-Null } catch { if ("$_" -match "^EXIT:\d+$") { throw } }
+    } elseif (-not $pkg.pinned -and $isPinned) {
+      Write-Info "    Pin remove: $($pkg.package_name)"
+      try { & $chocoExe pin remove --name="$($pkg.package_name)" -y 2>&1 | Out-Null } catch { if ("$_" -match "^EXIT:\d+$") { throw } }
+    }
+  }
+
+  # ── Fase 8: Actualización (si frecuencia lo permite) ──
+  if ($profile -and $profile.update_mode -ne 'disabled') {
+    $shouldUpdate = $true
+    $freqDays = $profile.upgrade_frequency_days
+    if ($freqDays -and $freqDays -gt 0 -and $resolved.last_update) {
+      try {
+        $lastUpdate = [DateTime]::Parse($resolved.last_update)
+        $daysSince = ([DateTime]::UtcNow - $lastUpdate).TotalDays
+        if ($daysSince -lt $freqDays) {
+          Write-Info "  Fase 8: Saltando actualización (última hace $([Math]::Round($daysSince,1)) días, frecuencia=$freqDays días)"
+          $shouldUpdate = $false
+        }
+      } catch { Write-Info "  Error parseando last_update, procediendo con actualización" }
     }
 
-    $maxLen = 50000
-    if ($stdoutVal.Length -gt $maxLen) { $stdoutVal = $stdoutVal.Substring(0, $maxLen) + "`n...[truncado]" }
-    if ($stderrVal.Length -gt $maxLen) { $stderrVal = $stderrVal.Substring(0, $maxLen) + "`n...[truncado]" }
+    if ($shouldUpdate) {
+      Write-Info "  Fase 8: Proceso de actualización (modo: $($profile.update_mode))..."
+      $outdated = Get-ChocoOutdated -chocoExe $chocoExe
+      $pinnedPkgs = Get-ChocoPinnedPackages -chocoExe $chocoExe
 
-    $finishedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+      $toUpdate = @()
+      foreach ($pkgName in $outdated.Keys) {
+        $isPinned = $pinnedPkgs.ContainsKey($pkgName)
+        if ($isPinned) {
+          Write-Info "    $pkgName está pinned, no se actualiza"
+          continue
+        }
+        if ($profile.update_mode -eq 'managed-only') {
+          # Solo actualizar si está en la lista de paquetes gestionados
+          $isManaged = $false
+          foreach ($mp in $installPkgs) {
+            if ($mp.package_name.ToLower() -eq $pkgName) { $isManaged = $true; break }
+          }
+          if (-not $isManaged) {
+            Write-Info "    $pkgName no es gestionado, saltando (modo managed-only)"
+            continue
+          }
+        }
+        $toUpdate += $pkgName
+      }
 
-    # Reportar resultado al servidor
-    Send-ChocoRun -serverUrl $serverUrl -agentId $agentId `
-      -deploymentGroupId $groupId -packageName $pkgName -actionName $action `
-      -startedAt $startedAt -finishedAt $finishedAt `
-      -exitCode $exitCodeVal -stdoutText $stdoutVal -stderrText $stderrVal -errorText $errorMsg
+      foreach ($pkgName in $toUpdate) {
+        $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+        Write-Info "    Actualizando $pkgName..."
+        $exitCodeVal = Run-ChocoCmd -chocoExe $chocoExe -cmdArgs "upgrade $pkgName -y" `
+          -serverUrl $serverUrl -agentId $agentId -packageName $pkgName -action 'upgrade' `
+          -startedAt $startedAt -iterationId $iterationId
+        if ($exitCodeVal -ne 0) { $hadErrors = $true }
+      }
 
-    Write-Info "    $pkgName exit code: $exitCodeVal"
-    if ($exitCodeVal -ne 0) { $hadErrors = $true }
+      # Marcar timestamp de última actualización
+      try {
+        $body = @{ timestamp = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ') } | ConvertTo-Json -Compress
+        Invoke-RestMethod -Uri "$serverUrl/api/choco/resolved/$agentId/mark-update" -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+      } catch {
+        if ("$_" -match "^EXIT:\d+$") { throw }
+        Write-Info "    Error marcando timestamp de actualización: $_"
+      }
+    }
   }
 
   return $(if ($hadErrors) { 1 } else { 0 })
+}
+
+function Run-ChocoCmd(
+  [string]$chocoExe, [string]$cmdArgs,
+  [string]$serverUrl, [int]$agentId,
+  [string]$packageName, [string]$action,
+  [string]$startedAt, [string]$iterationId
+) {
+  <# Ejecuta un comando choco y reporta el resultado al servidor #>
+  $stdoutVal = ''; $stderrVal = ''; $exitCodeVal = -1; $errorMsg = $null
+  try {
+    Write-Info "    choco $cmdArgs"
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName  = $chocoExe
+    $psi.Arguments = $cmdArgs
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow  = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError  = $true
+
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $stdoutVal = $proc.StandardOutput.ReadToEnd()
+    $stderrVal = $proc.StandardError.ReadToEnd()
+    [void]$proc.WaitForExit(600000) # timeout 10min
+    $exitCodeVal = $proc.ExitCode
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    $errorMsg = "$_"
+  }
+
+  $maxLen = 50000
+  if ($stdoutVal.Length -gt $maxLen) { $stdoutVal = $stdoutVal.Substring(0, $maxLen) + "`n...[truncado]" }
+  if ($stderrVal.Length -gt $maxLen) { $stderrVal = $stderrVal.Substring(0, $maxLen) + "`n...[truncado]" }
+
+  $finishedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+
+  Send-ChocoRun -serverUrl $serverUrl -agentId $agentId `
+    -packageName $packageName -actionName $action `
+    -startedAt $startedAt -finishedAt $finishedAt `
+    -exitCode $exitCodeVal -stdoutText $stdoutVal -stderrText $stderrVal -errorText $errorMsg `
+    -iterationId $iterationId
+
+  Write-Info "    $packageName exit code: $exitCodeVal"
+  return $exitCodeVal
 }
 
 function Send-ChocoRun(
   [string]$serverUrl, [int]$agentId,
   $deploymentGroupId, [string]$packageName, [string]$actionName,
   [string]$startedAt, [string]$finishedAt,
-  $exitCode, [string]$stdoutText, [string]$stderrText, [string]$errorText
+  $exitCode, [string]$stdoutText, [string]$stderrText, [string]$errorText,
+  [string]$iterationId
 ) {
   $body = ConvertTo-Json -Depth 3 -Compress @{
     deployment_group_id = $deploymentGroupId
@@ -1518,6 +1834,7 @@ function Send-ChocoRun(
     stdout        = $stdoutText
     stderr        = $stderrText
     error         = $errorText
+    iteration_id  = $iterationId
   }
   $uri = "$serverUrl/api/choco/runs"
   try {
@@ -1528,25 +1845,38 @@ function Send-ChocoRun(
   }
 }
 
-function Sync-ChocoInventory([string]$serverUrl, [int]$agentId) {
-  <# Sincroniza la lista de paquetes Chocolatey instalados localmente con el servidor. #>
+function Sync-ChocoInventory([string]$serverUrl, [int]$agentId, [object]$resolvedPackages) {
+  <# Sincroniza inventario choco con info de managed, available_version, etc. #>
   try {
-    $chocoExe = (Get-Command choco -ErrorAction SilentlyContinue).Source
-    if (-not $chocoExe) { $chocoExe = "$env:ProgramData\chocolatey\bin\choco.exe" }
-    if (-not (Test-Path $chocoExe)) {
-      Write-Info "Chocolatey no instalado, saltando sincronizacion de inventario."
+    $chocoExe = Get-ChocoExePath
+    if (-not $chocoExe) {
+      Write-Info "Chocolatey no instalado, saltando sincronización de inventario."
       return
     }
 
-    $raw = & $chocoExe list --local-only --limit-output 2>$null
+    $installed = Get-ChocoInstalledPackages -chocoExe $chocoExe
+    $pinned    = Get-ChocoPinnedPackages -chocoExe $chocoExe
+    $outdated  = Get-ChocoOutdated -chocoExe $chocoExe
+
+    # Construir lookup de paquetes gestionados
+    $managedLookup = @{}
+    if ($resolvedPackages) {
+      foreach ($rp in $resolvedPackages) {
+        $managedLookup[$rp.package_name.ToLower()] = $rp
+      }
+    }
+
     $packages = @()
-    foreach ($line in $raw) {
-      if ($line -match '^(.+?)\|(.+)$') {
-        $packages += @{
-          name    = $matches[1]
-          version = $matches[2]
-          pinned  = $false
-        }
+    foreach ($pkgName in $installed.Keys) {
+      $managedInfo = $managedLookup[$pkgName]
+      $packages += @{
+        name              = $pkgName
+        version           = $installed[$pkgName]
+        pinned            = if ($pinned.ContainsKey($pkgName)) { $true } else { $false }
+        available_version = if ($outdated.ContainsKey($pkgName)) { $outdated[$pkgName] } else { $null }
+        managed           = if ($managedInfo) { $true } else { $false }
+        deploy_params     = if ($managedInfo) { $managedInfo.params } else { $null }
+        deploy_action     = if ($managedInfo) { $managedInfo.action } else { $null }
       }
     }
 
@@ -1556,7 +1886,7 @@ function Sync-ChocoInventory([string]$serverUrl, [int]$agentId) {
     } | ConvertTo-Json -Depth 3 -Compress
     $uri = "$serverUrl/api/choco/agent-packages"
     Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
-    Write-Info "Inventario choco sincronizado: $($packages.Count) paquetes"
+    Write-Info "Inventario choco sincronizado: $($packages.Count) paquetes ($($managedLookup.Count) gestionados)"
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Info "No se pudo sincronizar inventario choco: $_"
@@ -1892,7 +2222,7 @@ function Invoke-Iterate {
   # ---- PASO 1: Facts ----
   Write-Info "Paso 1/4: Recopilando y enviando facts..."
   try {
-    $facts = Collect-Facts
+    $facts = Collect-Facts -serverUrl $srvUrl -agentId $agentId
     $res = Send-Facts -serverUrl $srvUrl -agentId $agentId -facts $facts
     if ($res) {
       Write-Success "Facts enviados: $($res.count) registros"
@@ -1984,24 +2314,22 @@ function Invoke-Iterate {
     $script:IterationHadErrors = $true
   }
 
-  # ---- PASO 3: Chocolatey deployments (perfiles + paquetes) ----
-  Write-Info "Paso 3/5: Consultando choco deployments..."
+  # ---- PASO 3: Chocolatey (config resuelta + ejecución por fases) ----
+  Write-Info "Paso 3/5: Obteniendo configuración Chocolatey resuelta..."
+  $resolvedPackages = $null
   try {
-    $chocoDeployments = @(Get-PendingChocoDeployments -serverUrl $srvUrl -agentId $agentId)
-    if ($chocoDeployments -and $chocoDeployments.Count -gt 0) {
-      Write-Info "$($chocoDeployments.Count) choco deployment group(s) encontrados"
-      foreach ($cd in $chocoDeployments) {
-        $groupId = $cd.deployment_group_id
-        $profileName = if ($cd.profile) { $cd.profile.name } else { 'sin perfil' }
-        $pkgCount = if ($cd.packages) { @($cd.packages).Count } else { 0 }
-        Write-Info "  Deployment group $groupId ($profileName, $pkgCount paquetes)..."
-        $exitC = Execute-ChocoDeployment -deployment $cd -serverUrl $srvUrl -agentId $agentId
-        Write-Info "    Resultado: $(if ($exitC -eq 0) { 'OK' } else { "errores (code $exitC)" })"
-        if ($exitC -ne 0) { $script:IterationHadErrors = $true }
-      }
-      Write-Success "Choco deployments procesados"
+    $resolved = Get-ResolvedChocoConfig -serverUrl $srvUrl -agentId $agentId
+    if ($resolved) {
+      $pkgCount = if ($resolved.packages) { @($resolved.packages).Count } else { 0 }
+      $hasProfile = if ($resolved.profile) { "perfil: $($resolved.profile.update_mode)" } else { "sin perfil" }
+      Write-Info "  Config resuelta: $pkgCount paquete(s), $hasProfile"
+      $resolvedPackages = $resolved.packages
+      $exitC = Invoke-ChocoPhased -resolved $resolved -serverUrl $srvUrl -agentId $agentId -iterationId $script:IterationId
+      Write-Info "  Resultado choco: $(if ($exitC -eq 0) { 'OK' } else { "con errores (code $exitC)" })"
+      if ($exitC -ne 0) { $script:IterationHadErrors = $true }
+      Write-Success "Configuración Chocolatey procesada"
     } else {
-      Write-Info "No hay choco deployments pendientes"
+      Write-Info "  No hay configuración Chocolatey para este agente"
     }
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
@@ -2012,7 +2340,7 @@ function Invoke-Iterate {
   # ---- PASO 4: Sincronizar inventario Chocolatey ----
   Write-Info "Paso 4/5: Sincronizando inventario Chocolatey..."
   try {
-    Sync-ChocoInventory -serverUrl $srvUrl -agentId $agentId
+    Sync-ChocoInventory -serverUrl $srvUrl -agentId $agentId -resolvedPackages $resolvedPackages
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Info "Error sincronizando inventario choco: $_ (continuando)"
