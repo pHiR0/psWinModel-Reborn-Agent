@@ -1147,6 +1147,54 @@ function Get-PendingDeployments([string]$serverUrl, [int]$agentId) {
   }
 }
 
+function Execute-ScriptWithOutput([hashtable]$deployment, [string]$serverUrl, [int]$agentId, [string]$iterationId = '') {
+  <# Ejecuta un script de un deployment, reporta al servidor y devuelve el resultado (ExitCode, Stdout, Stderr). #>
+  $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+
+  $cacheDir = Join-Path $OutDir 'scripts_cache'
+  if (-not (Test-Path $cacheDir)) { $null = New-Item -ItemType Directory -Path $cacheDir -Force }
+
+  $scriptFile = Join-Path $cacheDir "script_$($deployment.script_id).ps1"
+  [System.IO.File]::WriteAllText($scriptFile, $deployment.content, [System.Text.Encoding]::UTF8)
+
+  $stdoutVal = ''; $stderrVal = ''; $exitCodeVal = -1; $errorMsg = $null
+  try {
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName  = 'powershell.exe'
+    $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptFile`""
+    $psi.UseShellExecute = $false
+    $psi.CreateNoWindow  = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError  = $true
+
+    $proc = [System.Diagnostics.Process]::Start($psi)
+    $stdoutVal = $proc.StandardOutput.ReadToEnd()
+    $stderrVal = $proc.StandardError.ReadToEnd()
+    [void]$proc.WaitForExit(300000)
+    $exitCodeVal = $proc.ExitCode
+    if ($exitCodeVal -eq 0 -and -not [string]::IsNullOrWhiteSpace($stderrVal)) { $exitCodeVal = 1 }
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    $errorMsg = "$_"
+  }
+
+  $maxLen = 50000
+  # Versión truncada solo para el registro en Script Runs (visualización en UI)
+  $stdoutDisplay = if ($stdoutVal.Length -gt $maxLen) { $stdoutVal.Substring(0, $maxLen) + "`n...[truncado]" } else { $stdoutVal }
+  $stderrDisplay = if ($stderrVal.Length -gt $maxLen) { $stderrVal.Substring(0, $maxLen) + "`n...[truncado]" } else { $stderrVal }
+
+  $finishedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+
+  Send-ScriptRun -serverUrl $serverUrl -agentId $agentId `
+    -deploymentId $deployment.id -scriptId $deployment.script_id `
+    -startedAt $startedAt -finishedAt $finishedAt `
+    -exitCode $exitCodeVal -stdoutText $stdoutDisplay -stderrText $stderrDisplay -errorText $errorMsg `
+    -iterationId $iterationId
+
+  # Se devuelve el stdout COMPLETO (sin truncar) para que Invoke-Iterate pueda parsear el JSON de los facts
+  return @{ ExitCode = $exitCodeVal; Stdout = $stdoutVal; Stderr = $stderrVal; Error = $errorMsg }
+}
+
 function Execute-Script([hashtable]$deployment, [string]$serverUrl, [int]$agentId, [string]$iterationId = '') {
   <# Ejecuta un script de un deployment y reporta el resultado directamente al servidor. #>
   $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
@@ -1701,18 +1749,70 @@ function Invoke-Iterate {
     $deployments = @(Get-PendingDeployments -serverUrl $srvUrl -agentId $agentId)
     if ($deployments -and $deployments.Count -gt 0) {
       Write-Info "$($deployments.Count) despliegue(s) de scripts encontrados"
-      foreach ($dep in $deployments) {
-        if (-not $dep.enabled) { continue }  # skip disabled
-        Write-Info "  Ejecutando script '$($dep.name)' (deployment $($dep.id), script $($dep.script_id))..."
-        $depHash = @{
-          id        = $dep.id
-          script_id = $dep.script_id
-          content   = $dep.content
+
+      # Separar en fact scripts y action scripts
+      $factDeps   = @($deployments | Where-Object { $_.script_type -eq 'fact' })
+      $actionDeps = @($deployments | Where-Object { $_.script_type -ne 'fact' })
+      Write-Info "  Facts: $($factDeps.Count) | Actions: $($actionDeps.Count)"
+
+      # Primero ejecutar todos los fact scripts
+      if ($factDeps.Count -gt 0) {
+        Write-Info "  --- Ejecutando fact scripts ---"
+        foreach ($dep in $factDeps) {
+          if (-not $dep.enabled) { continue }
+          Write-Info "  [FACT] Ejecutando script '$($dep.name)' (deployment $($dep.id), script $($dep.script_id))..."
+          $depHash = @{
+            id          = $dep.id
+            script_id   = $dep.script_id
+            content     = $dep.content
+            script_type = 'fact'
+            name        = $dep.name
+          }
+          $factResult = Execute-ScriptWithOutput -deployment $depHash -serverUrl $srvUrl -agentId $agentId -iterationId $script:IterationId
+          Write-Info "    Exit code: $($factResult.ExitCode)"
+          if ($factResult.ExitCode -eq 0 -and $factResult.Stdout) {
+            # Intentar parsear la salida como JSON y enviar como facts
+            try {
+              $parsedJson = $factResult.Stdout | ConvertFrom-Json -ErrorAction Stop
+              $factKey = ($dep.name -replace '[^a-zA-Z0-9_]','_').ToLower()
+              $factArray = @(
+                @{
+                  fact_key    = $factKey
+                  value       = $factResult.Stdout.Trim()
+                  source      = 'script'
+                  script_name = $dep.name
+                }
+              )
+              $factBody = ConvertTo-Json -Depth 5 -Compress @{ facts = $factArray }
+              $factUri = "$srvUrl/api/facts/$agentId"
+              Invoke-RestMethod -Uri $factUri -Method Post -Body $factBody -ContentType 'application/json' -ErrorAction Stop | Out-Null
+              Write-Success "    Fact generado: $factKey"
+            } catch {
+              if ("$_" -match "^EXIT:\d+$") { throw }
+              Write-Info "    Salida no es JSON valido o error enviando fact: $_ (continuando)"
+            }
+          }
+          if ($factResult.ExitCode -ne 0) { $script:IterationHadErrors = $true }
         }
-        $exitC = Execute-Script -deployment $depHash -serverUrl $srvUrl -agentId $agentId -iterationId $script:IterationId
-        Write-Info "    Exit code: $exitC"
-        if ($exitC -ne 0) { $script:IterationHadErrors = $true }
       }
+
+      # Luego ejecutar todos los action scripts
+      if ($actionDeps.Count -gt 0) {
+        Write-Info "  --- Ejecutando action scripts ---"
+        foreach ($dep in $actionDeps) {
+          if (-not $dep.enabled) { continue }
+          Write-Info "  [ACTION] Ejecutando script '$($dep.name)' (deployment $($dep.id), script $($dep.script_id))..."
+          $depHash = @{
+            id        = $dep.id
+            script_id = $dep.script_id
+            content   = $dep.content
+          }
+          $exitC = Execute-Script -deployment $depHash -serverUrl $srvUrl -agentId $agentId -iterationId $script:IterationId
+          Write-Info "    Exit code: $exitC"
+          if ($exitC -ne 0) { $script:IterationHadErrors = $true }
+        }
+      }
+
       Write-Success "Scripts procesados"
     } else {
       Write-Info "No hay scripts pendientes"
