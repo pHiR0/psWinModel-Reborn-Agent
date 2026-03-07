@@ -209,3 +209,49 @@ No tienes que modificar el contenido, nada mas que para marcarlo como hecho, si 
 > Implementado: botón Recargar convertido a icono SVG (flecha circular). Añadido botón Descargar JSON con icono de descarga (flecha hacia abajo). La descarga genera agent-{id}-facts.json parseando JSON facts a objetos nativos.
 + El popup que se muestra al pulsar sobre el icono de info,en los "Tokens de registros", que muestra el usuario que lo ha creado y la fecha que se creó el token, aparece arriba del todo a la derecha del cuerpo de la webapp, lo suyo es que aparezca bajo el icono info, como si surgiera una viñeta del mismo.
 > Implementado: añadido estado tokenInfoPopupPos con coordenadas calculadas del getBoundingClientRect() del botón. El popup usa fixed con top/left dinámicos en lugar de top-4 right-4. Incluye flecha indicadora (triangulito) en la parte superior. Overlay transparente para cerrar al hacer clic fuera.
+
++ En los facts de agentes:
+> Por defecto quiero que aparezcan todos colapsed, y haya por algun lado de la interfaz botones para expadir todo y/o colapsar todo.
+> Además quier que los valores que sean tipo JSON los conviertas en objetos y los integres en el treeview
++ En los Scripts powershell, vamos a hacer un cambio importante.
+> Vamos a añadir facts personalizados.
+> Para ello los scripts de powershell tienen que tener una propiedad que puede ser action o fact. El tipo action es tal cual está ahora se ejecuta y se registra la salida en "Scripts Runs" del agente. El tipo fact, tambien se ejecuta, pero la salida debe ser puramente y en su totalidad un json.
+> Para los tipo fact, si la salida es correcta y es un JSON, en el "Sripts Runs" no mostramos stdout, solo mostramos Fact Generado el nombre del objeto y objetos del primer nivel del json. En caso de que no se haya ejecutado bien mostradmos el stdout, y el stderr si lo tiene, igual que cualquier otro script.
+> Los de tipo fact que se hayan ejecutado correctamente, deben icorporarse a la seccion de Facts del agente, añadirse a los que se generan de forma interna (built-in)
+> En la vista ejecuciones de scripts debemos diferenciar correctametne los de tipo action a los de tipo fact, usa un icono distintivo para cada uno, y lo pones en la columna "Script" de cada uno a la izquierda del nombre.
+> La forma en la que se van a ejecutar en el agente es como hasta ahora, respetando el  OrderId, pero además ahora haremos 2 agrupaciones, por un lado los facts script y por otro los actions scripts y en el agente primero ejecutamos todos los facts scripts y luego los actions scripts.
+> En la vista de "Facts" en los agente, los nodos generados por facts BuiltIn los dejamos con el color folder amarillo al estilo Windows Explorer como está actualmente, pero los generados por facts personalizados le pondremos un color azul o azulado, el resto de objeto bajo el nodo se quedan igual.
+> En caso de que en el nivel uno del arbo haya 2 nodos o mas con el mismo nombre (colisiones) me gustaría que aparecieran todos pero con un simbolo (‼️) , si no puede ser añadeles al nombre algo para diferenciarlos, se me ocurre poner ocmo sufijo entre [] , el id del script que lo genera.
++ Toda la interfaz que tenemos de "Actualización del Agente" dentro de "Configuración" me gustaría sacarla al Side Menú, pero no se en que seccion colocarlo, así que sácalo y colocalo en la seccion que creas que tiene mas encaje
++ A los script como vamos a asignarle un tipo (fact, action) y ya hemos indicado que vamos a usar un icono identificativo para cada tipo, quiero qu uses ese icono en la vista "Scripts PowerShell" junto al nombre y tambien en los "Despliegues" en la columna "Scripts" junto al nombre de cada uno ( a la derecha)
++ En todas partes de la web console, quiero que unifiques los botones de acciones y uses los iconos representativos para cada uno de ellos y el tooltip para el texto, revisa en todos sitios de la webconsole:
+> "Versiones de agentes" , "Despliegues" , "Scripts de Powershell", "Organizaciones", "Gestion de Etiquetas", "Grupos", "Tokens de registro", "Todos los agente"
+> Si hay alguna accion que no se puede reprentar con icono pones el texto
+> Usa para todo el mismo esquema de iconos y colores.
+
++ Los facts personalizados los estás mezclando usando como raiz el nombre del script, luego en segundo level el nombre del script normalizado (minusculas , sustituyendo espacios por guines bajos , etc) y a partir de entonces pone todo el objeto generado a partir del json, los 2 primero niveles esos no son necesarios, ya el json viene formateado e ideado para poner su primer nivel de objeto en el primer nivel de los facts.
++ Tambien veo que los facts OS y Cpu aparecen con el simbolo ‼️ y ell sufijo [Built-In] no se porqué pero bajo las directrices anteriores no deberían.
++ Los Facts, al menos el primer nivel quiero que esté ordenado alfabeticamente, y los de tipo "container" primeros y despues los de tipo valor , vamos el mismo orden que pone el explorador de windows.
++ Si es posible a la izquierde de los botones de acciones de los facts poner un sencillo buscador para buscar valores o container que coincidan: Si es uno o varios container, se muestra el container con todos sus padres, y tambien todos sus hijos, si es un valor se muestra el valor con todos sus padres.
+
++ En los facts built-in :
+> Del Agente , incluye el tamaño del archivo pswm.exe y el hash
+> Hay uno que se llama Total y veo que dentro indica la ram total, lo suyo seria llamarlo memory o ram al primer nivel del objeto
+> Agrega un fact con el System Uptime, que muestre la hora/fecha de inicio, y el tiempo que lleva ecendido en dias, horas, minutos y segundos
++ Me gustaría , para los facts personalizados, ponerles al nodo del primer nivel, un tooltip o equivalente, que indique el Nombre del Script que lo generó, y la fecha de ultima ejecución.
++ En los "Scripts Runs" me gustaría saber el tamaño de la salida de cada uno, de ambos tipos, en unidad Bytes (human readable) y luego en el colapsabe de IterationID tambien mostrar el total.
++ Tambien en los "Scripts Runs" para el enlace de "Recargar" , "Ver"/"Ocultar" usa los iconos reprenstativos de cada accion.
++ Aquellos facts que lleven mas de X días sin actualizar/reportarse, quiero que el color del nodo primer nivel cambie a color gris oscuro
+> Para determinar la cantidad de dias, quiero que añadas una configuración que determine esos días en la configuracion en sistema
++ En todos los sitios donde se esté representando una ubicacion/localizacion hazlo usando mismo formato con badge que usamos en la ficha de edicion en los Despliegues de tipo location, revisa todo , pero entre otro te puedo decir estos:
+> En la ficha de información del agente, es muy similar pero la chincheta está mal ubicada
+> En la Vista Generl de gestion de Todos los agentes en la columna "Ubicacion" , en este caso deja tambien la de Organización a parte
+> En Tokens de Registro en la columan "Org / Ubicación" y tambien en el popup de "Edicion de Token"
++ En el formulario de edicion de un Despliegue muestras los badges con los scripts del mismo, recuerda pornerle a esos badges el icono del tipo de script (fact o action)
+
+- En el formulario de Edicion de Token la organización y ubicacion no se está representando bien, el caso existente tiene asignado la organizacion ubicacion "🏢 pHiSoft > SJplace > 📍 Casa" y lo que se muestra es "🏢 pHiSoft > 📍 📍 Casa"
+- En el popup de selecion de script en Despliegues llamado "Agregar Script" , quiero que los Scripts que aparecen ahí vayan acompañado de su icono segun el tipo de script (action o fact)
+- En "Script Runs" en los tamaños de de la salida de los script, en aquellos que son de tipo facts, es cierto que en esta seccion se muestra el texto al estilo siguiente :
+Fact Generado: Obtener Servicios
+Claves: services
+> Esto está bien, pero el tamaño si hay que registrar el tamaño real de la salida del script.

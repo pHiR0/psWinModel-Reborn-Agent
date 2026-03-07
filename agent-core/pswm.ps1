@@ -1014,8 +1014,10 @@ function Collect-Facts {
   $facts = @()
 
   # --- OS ---
+  $script:_osInstance = $null
   try {
     $os = Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue
+    $script:_osInstance = $os
     if ($os) {
       $facts += @{ fact_key = 'os_name';      value = $os.Caption;             source = 'agent' }
       $facts += @{ fact_key = 'os_version';   value = $os.Version;             source = 'agent' }
@@ -1032,7 +1034,7 @@ function Collect-Facts {
     $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
     if ($cs) {
       $facts += @{ fact_key = 'domain';         value = $cs.Domain;          source = 'agent' }
-      $facts += @{ fact_key = 'total_memory_gb'; value = [math]::Round($cs.TotalPhysicalMemory / 1GB, 2); source = 'agent' }
+      $facts += @{ fact_key = 'memory_total_gb'; value = [math]::Round($cs.TotalPhysicalMemory / 1GB, 2); source = 'agent' }
       $facts += @{ fact_key = 'manufacturer';   value = $cs.Manufacturer;    source = 'agent' }
       $facts += @{ fact_key = 'model';          value = $cs.Model;           source = 'agent' }
     }
@@ -1101,6 +1103,33 @@ function Collect-Facts {
     } catch { }
   }
   $facts += @{ fact_key = 'agent_version'; value = $agentVer; source = 'agent' }
+
+  # --- Tamaño y hash del pswm.exe (solo en modo compilado) ---
+  if (Test-IsCompiled) {
+    try {
+      $exePath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+      $fi = Get-Item -LiteralPath $exePath -ErrorAction Stop
+      $sha256 = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256 -ErrorAction Stop).Hash
+      $facts += @{ fact_key = 'agent_exe_size_bytes'; value = $fi.Length;  source = 'agent' }
+      $facts += @{ fact_key = 'agent_exe_sha256';     value = $sha256;     source = 'agent' }
+    } catch { }
+  }
+
+  # --- Uptime del sistema ---
+  try {
+    $osUp = if ($script:_osInstance) { $script:_osInstance } else { Get-CimInstance -ClassName Win32_OperatingSystem -ErrorAction SilentlyContinue }
+    if ($osUp) {
+      $uptimeSpan = (Get-Date) - $osUp.LastBootUpTime
+      $uptimeObj = @{
+        boot_time = $osUp.LastBootUpTime.ToString('yyyy-MM-dd HH:mm:ss')
+        days      = [int][math]::Floor($uptimeSpan.TotalDays)
+        hours     = $uptimeSpan.Hours
+        minutes   = $uptimeSpan.Minutes
+        seconds   = $uptimeSpan.Seconds
+      }
+      $facts += @{ fact_key = 'uptime'; value = ($uptimeObj | ConvertTo-Json -Compress -Depth 2); source = 'agent' }
+    }
+  } catch { }
 
   # --- External facts (scripts .ps1 en external_facts/) ---
   $extDir = Join-Path $OutDir 'external_facts'
@@ -1182,6 +1211,18 @@ function Execute-ScriptWithOutput([hashtable]$deployment, [string]$serverUrl, [i
   # Versión truncada solo para el registro en Script Runs (visualización en UI)
   $stdoutDisplay = if ($stdoutVal.Length -gt $maxLen) { $stdoutVal.Substring(0, $maxLen) + "`n...[truncado]" } else { $stdoutVal }
   $stderrDisplay = if ($stderrVal.Length -gt $maxLen) { $stderrVal.Substring(0, $maxLen) + "`n...[truncado]" } else { $stderrVal }
+
+  # Para scripts de tipo fact: si la ejecución fue OK y la salida es JSON válido,
+  # reemplazar el stdout en Script Runs con un resumen legible en lugar del JSON crudo.
+  if ($deployment.script_type -eq 'fact' -and $exitCodeVal -eq 0 -and -not [string]::IsNullOrWhiteSpace($stdoutVal)) {
+    try {
+      $parsedFact = $stdoutVal.Trim() | ConvertFrom-Json -ErrorAction Stop
+      $topKeys = ($parsedFact.PSObject.Properties.Name) -join ', '
+      $stdoutDisplay = "Fact Generado: $($deployment.name)`nClaves: $topKeys"
+    } catch {
+      # La salida no es JSON; se muestra el stdout truncado como de costumbre
+    }
+  }
 
   $finishedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
 
