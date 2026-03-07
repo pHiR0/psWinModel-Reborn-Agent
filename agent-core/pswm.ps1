@@ -56,6 +56,9 @@ $script:Version = "0.1.0-mvp"
 $script:ConfigPath = Join-Path $OutDir "config.json"
 $script:PrivateKeyPath = Join-Path $OutDir "agent_private.pem"
 $script:PublicKeyPath = Join-Path $OutDir "agent_public.pem"
+# Caché de 'choco outdated -r' (16h) y lock local de última actualización Chocolatey
+$script:ChocoOutdatedCachePath = Join-Path $OutDir 'choco_outdated_cache.json'
+$script:ChocoUpdateLockPath    = Join-Path $OutDir 'choco_update_lock.json'
 
 # Detectar PowerShell version
 $script:UseLegacyRsa = $PSVersionTable.PSVersion.Major -lt 7
@@ -1477,9 +1480,40 @@ function Get-ChocoFeatures([string]$chocoExe) {
 }
 
 function Get-ChocoOutdated([string]$chocoExe) {
-  <# Devuelve hashtable: nombre -> available_version #>
+  <#
+  .SYNOPSIS
+    Devuelve hashtable: nombre -> available_version.
+    Limita la llamada a choco.org a un máximo de 1 vez cada 16 horas.
+    El resultado se cachea en $script:ChocoOutdatedCachePath.
+  #>
+  $cacheMaxHours = 16
+  $cachePath = $script:ChocoOutdatedCachePath
+
+  # Verificar si existe caché válida
+  if (Test-Path $cachePath) {
+    try {
+      $cacheData = Get-Content $cachePath -Raw -ErrorAction Stop | ConvertFrom-Json
+      if ($cacheData.timestamp) {
+        $cacheAgH = ([DateTime]::UtcNow - [DateTime]::Parse($cacheData.timestamp)).TotalHours
+        if ($cacheAgH -lt $cacheMaxHours) {
+          Write-Info "  [choco outdated] Usando caché ($([math]::Round($cacheAgH, 1))h de antigüedad, límite ${cacheMaxHours}h). Archivo: $cachePath"
+          $result = @{}
+          if ($cacheData.packages) {
+            foreach ($prop in $cacheData.packages.PSObject.Properties) {
+              $result[$prop.Name] = $prop.Value
+            }
+          }
+          return $result
+        } else {
+          Write-Info "  [choco outdated] Caché expirada ($([math]::Round($cacheAgH, 1))h >= ${cacheMaxHours}h), regenerando..."
+        }
+      }
+    } catch { Write-Info "  [choco outdated] Caché inválida o ilegible, regenerando..." }
+  }
+
   $result = @{}
   try {
+    Write-Info "  [choco outdated] Ejecutando 'choco outdated -r' (consulta a servidores Chocolatey)..."
     $raw = & $chocoExe outdated -r 2>$null
     foreach ($line in $raw) {
       $parts = $line -split '\|'
@@ -1487,6 +1521,15 @@ function Get-ChocoOutdated([string]$chocoExe) {
         $result[$parts[0].ToLower()] = $parts[2]  # available version
       }
     }
+    # Guardar en caché
+    try {
+      $cacheObj = @{
+        timestamp = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')
+        packages  = $result
+      }
+      $cacheObj | ConvertTo-Json -Depth 3 -Compress | Set-Content -Path $cachePath -Encoding UTF8 -Force
+      Write-Info "  [choco outdated] $($result.Count) paquetes desactualizados. Caché guardada en: $cachePath"
+    } catch { Write-Info "  [choco outdated] Error guardando caché: $_" }
   } catch { Write-Info "Error consultando outdated: $_" }
   return $result
 }
@@ -1712,15 +1755,25 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
   if ($profile -and $profile.update_mode -ne 'disabled') {
     $shouldUpdate = $true
     $freqDays = $profile.upgrade_frequency_days
-    if ($freqDays -and $freqDays -gt 0 -and $resolved.last_update) {
-      try {
-        $lastUpdate = [DateTime]::Parse($resolved.last_update)
-        $daysSince = ([DateTime]::UtcNow - $lastUpdate).TotalDays
-        if ($daysSince -lt $freqDays) {
-          Write-Info "  Fase 8: Saltando actualización (última hace $([Math]::Round($daysSince,1)) días, frecuencia=$freqDays días)"
-          $shouldUpdate = $false
-        }
-      } catch { Write-Info "  Error parseando last_update, procediendo con actualización" }
+    $localLockPath = $script:ChocoUpdateLockPath
+    if ($freqDays -and $freqDays -gt 0) {
+      if (Test-Path $localLockPath) {
+        # Lock local EXISTS → usarlo como referencia de última actualización
+        try {
+          $lockData = Get-Content $localLockPath -Raw -ErrorAction Stop | ConvertFrom-Json
+          if ($lockData.timestamp) {
+            $lastUpdate = [DateTime]::Parse($lockData.timestamp)
+            $daysSince = ([DateTime]::UtcNow - $lastUpdate).TotalDays
+            if ($daysSince -lt $freqDays) {
+              Write-Info "  Fase 8: Saltando actualización — lock local: última hace $([Math]::Round($daysSince,1))d, frecuencia=$freqDays días. ($localLockPath)"
+              $shouldUpdate = $false
+            }
+          }
+        } catch { Write-Info "  Lock local de actualización inválido, procediendo con actualización" }
+      } else {
+        # Sin lock local → sin historial de actualizaciones en esta máquina, actualizar
+        Write-Info "  Fase 8: Sin lock local de actualizaciones ($localLockPath), forzando actualización"
+      }
     }
 
     if ($shouldUpdate) {
@@ -1758,14 +1811,21 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
         if ($exitCodeVal -ne 0) { $hadErrors = $true }
       }
 
-      # Marcar timestamp de última actualización
+      # Marcar timestamp de última actualización (servidor + lock local)
+      $updateTs = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')
       try {
-        $body = @{ timestamp = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ') } | ConvertTo-Json -Compress
+        $body = @{ timestamp = $updateTs } | ConvertTo-Json -Compress
         Invoke-RestMethod -Uri "$serverUrl/api/choco/resolved/$agentId/mark-update" -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
       } catch {
         if ("$_" -match "^EXIT:\d+$") { throw }
-        Write-Info "    Error marcando timestamp de actualización: $_"
+        Write-Info "    Error marcando timestamp de actualización en servidor: $_"
       }
+      # Escribir lock local de actualización
+      try {
+        $lockObj = @{ timestamp = $updateTs; started_at = $updateTs } | ConvertTo-Json -Compress
+        $lockObj | Set-Content -Path $script:ChocoUpdateLockPath -Encoding UTF8 -Force
+        Write-Info "    Lock local de actualización escrito en: $($script:ChocoUpdateLockPath)"
+      } catch { Write-Info "    Error escribiendo lock local: $_" }
     }
   }
 
@@ -1779,9 +1839,15 @@ function Run-ChocoCmd(
   [string]$startedAt, [string]$iterationId
 ) {
   <# Ejecuta un comando choco y reporta el resultado al servidor #>
+  # Añadir --no-progress si no está presente (reduce ruido en la salida de logs)
+  if ($cmdArgs -notmatch '--no-progress') {
+    $cmdArgs = "$cmdArgs --no-progress"
+  }
+  $cmdLine = "$chocoExe $cmdArgs"
+
   $stdoutVal = ''; $stderrVal = ''; $exitCodeVal = -1; $errorMsg = $null
   try {
-    Write-Info "    choco $cmdArgs"
+    Write-Info "    CMD: $cmdLine"
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName  = $chocoExe
     $psi.Arguments = $cmdArgs
@@ -1799,6 +1865,10 @@ function Run-ChocoCmd(
     if ("$_" -match "^EXIT:\d+$") { throw }
     $errorMsg = "$_"
   }
+
+  # Anteponer la línea de comando al stdout para trazabilidad
+  $cmdHeader = "CMD: $cmdLine`n$('=' * 70)`n"
+  $stdoutVal = $cmdHeader + $stdoutVal
 
   $maxLen = 50000
   if ($stdoutVal.Length -gt $maxLen) { $stdoutVal = $stdoutVal.Substring(0, $maxLen) + "`n...[truncado]" }
@@ -2754,6 +2824,62 @@ function Invoke-Gui {
   }
 }
 
+function Invoke-ResetTimersLock {
+  <#
+  .SYNOPSIS
+    Elimina la caché de 'choco outdated -r' y el lock local de última actualización Chocolatey.
+    Esto fuerza que en la próxima iteración se vuelva a ejecutar 'choco outdated -r'
+    y también se ejecute el proceso de actualización (ignorando la frecuencia configurada).
+  #>
+  Write-Host ""
+  Write-Host "=== reset_timers_lock ===" -ForegroundColor Cyan
+  Write-Host ""
+
+  # 1. Caché de 'choco outdated -r'
+  $cachePath = $script:ChocoOutdatedCachePath
+  Write-Host "1. Caché choco outdated: $cachePath" -ForegroundColor Yellow
+  if (Test-Path $cachePath) {
+    try {
+      $cacheData = Get-Content $cachePath -Raw -ErrorAction Stop | ConvertFrom-Json
+      Write-Host "   Timestamp caché  : $($cacheData.timestamp)" -ForegroundColor Gray
+      Write-Host "   Paquetes cacheados: $(@($cacheData.packages.PSObject.Properties).Count)" -ForegroundColor Gray
+      Remove-Item $cachePath -Force -ErrorAction Stop
+      Write-Host "   ✓ Eliminado" -ForegroundColor Green
+    } catch {
+      Write-Host "   ✗ Error leyendo/eliminando: $_" -ForegroundColor Red
+    }
+  } else {
+    Write-Host "   (no existe, nada que eliminar)" -ForegroundColor DarkGray
+  }
+
+  Write-Host ""
+
+  # 2. Lock local de última actualización Chocolatey
+  $lockPath = $script:ChocoUpdateLockPath
+  Write-Host "2. Lock local actualización Choco: $lockPath" -ForegroundColor Yellow
+  if (Test-Path $lockPath) {
+    try {
+      $lockData = Get-Content $lockPath -Raw -ErrorAction Stop | ConvertFrom-Json
+      Write-Host "   Timestamp lock    : $($lockData.timestamp)" -ForegroundColor Gray
+      if ($lockData.started_at) {
+        Write-Host "   Inicio proceso    : $($lockData.started_at)" -ForegroundColor Gray
+      }
+      Remove-Item $lockPath -Force -ErrorAction Stop
+      Write-Host "   ✓ Eliminado" -ForegroundColor Green
+    } catch {
+      Write-Host "   ✗ Error leyendo/eliminando: $_" -ForegroundColor Red
+    }
+  } else {
+    Write-Host "   (no existe, nada que eliminar)" -ForegroundColor DarkGray
+  }
+
+  Write-Host ""
+  Write-Host "Resultado: en la próxima iteración se ejecutará 'choco outdated -r'" -ForegroundColor Cyan
+  Write-Host "           y el proceso de actualización de paquetes Chocolatey." -ForegroundColor Cyan
+  Write-Host ""
+  Exit-Cmd 0
+}
+
 function Invoke-Help {
   Write-Host @"
 
@@ -2777,6 +2903,9 @@ Comandos disponibles:
                         - disabled: no se proporcionan actualizaciones
                         - upgrade: solo actualiza si la version del servidor es mayor
                         - mandatory: fuerza la version publicada (permite downgrade)
+  reset_timers_lock   Elimina la cache de 'choco outdated -r' y el lock local de actualizacion.
+                      Fuerza que en la proxima iteracion se re-ejecute la consulta de
+                      actualizaciones y el proceso de upgrade de paquetes Chocolatey.
   dummy_iterate       Escribe fecha, params, PID y usuario en ProgramData\pswm-reborn\test.txt
   apply_update        Aplicar actualizacion (uso interno, ejecutado por pswm_updater.exe)
   gui                 Abre la interfaz grafica (instalacion o gestion del servicio)
@@ -2827,6 +2956,7 @@ switch ($Command.ToLower()) {
   "install"           { Invoke-Install }
   "uninstall_service" { Invoke-UninstallService }
   "iterate"           { Invoke-Iterate }
+  "reset_timers_lock" { Invoke-ResetTimersLock }
   "dummy_iterate"     { Invoke-DummyIterate }
   "apply_update"      { Invoke-ApplyUpdate }
   "gui"               { Invoke-Gui }
