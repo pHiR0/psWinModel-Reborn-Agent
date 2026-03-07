@@ -1326,7 +1326,7 @@ function Get-PendingChocoDeployments([string]$serverUrl, [int]$agentId) {
   $uri = "$serverUrl/api/choco/deployments/agent/$agentId"
   try {
     $res = Invoke-RestMethod -Uri $uri -Method Get -ErrorAction Stop
-    return @($res.deployments)  # @() garantiza array aunque solo haya 1 elemento
+    return @($res.deployments)  # cada elemento tiene: deployment_group_id, profile, packages[]
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Err "Error obteniendo choco deployments: $_"
@@ -1334,72 +1334,183 @@ function Get-PendingChocoDeployments([string]$serverUrl, [int]$agentId) {
   }
 }
 
-function Execute-ChocoDeployment([object]$deployment, [string]$serverUrl, [int]$agentId) {
-  <# Ejecuta una operacion Chocolatey y reporta el resultado directamente al servidor. #>
-  $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
-  $action = $deployment.action
-  $pkg    = $deployment.package_name
-  $ver    = $deployment.version
-  $chParams = $deployment.params
+function Apply-ChocoProfile([object]$profile) {
+  <# Aplica un perfil Chocolatey: settings, sources, update mode, choco self policy #>
+  if (-not $profile) { return }
 
-  $chocoArgs = ''
-  switch ($action) {
-    'install'   { $chocoArgs = "install $pkg -y" }
-    'upgrade'   { $chocoArgs = "upgrade $pkg -y" }
-    'uninstall' { $chocoArgs = "uninstall $pkg -y" }
-    default     { $chocoArgs = "install $pkg -y" }
+  $chocoExe = (Get-Command choco -ErrorAction SilentlyContinue).Source
+  if (-not $chocoExe) { $chocoExe = "$env:ProgramData\chocolatey\bin\choco.exe" }
+  if (-not (Test-Path $chocoExe)) {
+    Write-Info "Chocolatey no instalado, no se puede aplicar perfil."
+    return
   }
-  if ($ver)      { $chocoArgs += " --version=$ver" }
-  if ($chParams) { $chocoArgs += " $chParams" }
 
-  $stdoutVal = ''; $stderrVal = ''; $exitCodeVal = -1; $errorMsg = $null
+  # Aplicar settings (array de {key, value})
   try {
-    $chocoExe = (Get-Command choco -ErrorAction SilentlyContinue).Source
-    if (-not $chocoExe) { $chocoExe = "$env:ProgramData\chocolatey\bin\choco.exe" }
-
-    $psi = New-Object System.Diagnostics.ProcessStartInfo
-    $psi.FileName  = $chocoExe
-    $psi.Arguments = $chocoArgs
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow  = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError  = $true
-
-    $proc = [System.Diagnostics.Process]::Start($psi)
-    $stdoutVal = $proc.StandardOutput.ReadToEnd()
-    $stderrVal = $proc.StandardError.ReadToEnd()
-    [void]$proc.WaitForExit(600000) # timeout 10min
-    $exitCodeVal = $proc.ExitCode
+    $settings = @()
+    if ($profile.settings_json -and $profile.settings_json -ne '[]') {
+      $settings = $profile.settings_json | ConvertFrom-Json -ErrorAction SilentlyContinue
+    }
+    foreach ($s in $settings) {
+      if ($s.key) {
+        Write-Info "    choco config set $($s.key) = $($s.value)"
+        & $chocoExe config set --name="$($s.key)" --value="$($s.value)" -y 2>&1 | Out-Null
+      }
+    }
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
-    $errorMsg = "$_"
+    Write-Info "    Error aplicando settings del perfil: $_"
   }
 
-  $maxLen = 50000
-  if ($stdoutVal.Length -gt $maxLen) { $stdoutVal = $stdoutVal.Substring(0, $maxLen) + "`n...[truncado]" }
-  if ($stderrVal.Length -gt $maxLen) { $stderrVal = $stderrVal.Substring(0, $maxLen) + "`n...[truncado]" }
+  # Aplicar sources (array de {name, url, priority, disabled})
+  try {
+    $sources = @()
+    if ($profile.sources_json -and $profile.sources_json -ne '[]') {
+      $sources = $profile.sources_json | ConvertFrom-Json -ErrorAction SilentlyContinue
+    }
+    foreach ($src in $sources) {
+      if ($src.name -and $src.url) {
+        Write-Info "    choco source add/update: $($src.name) -> $($src.url)"
+        # Remover si existe para re-crear con las opciones correctas
+        & $chocoExe source remove --name="$($src.name)" -y 2>&1 | Out-Null
+        $srcArgs = "source add --name=`"$($src.name)`" --source=`"$($src.url)`" -y"
+        if ($src.priority) { $srcArgs += " --priority=$($src.priority)" }
+        & $chocoExe $srcArgs.Split(' ') 2>&1 | Out-Null
+        if ($src.disabled) {
+          & $chocoExe source disable --name="$($src.name)" -y 2>&1 | Out-Null
+        }
+      }
+    }
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "    Error aplicando sources del perfil: $_"
+  }
 
-  $finishedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+  # Choco self policy: upgrade o pin
+  try {
+    $selfPolicy = $profile.choco_self_policy
+    if ($selfPolicy -eq 'upgrade') {
+      Write-Info "    choco upgrade chocolatey -y"
+      & $chocoExe upgrade chocolatey -y 2>&1 | Out-Null
+    } elseif ($selfPolicy -eq 'pin') {
+      Write-Info "    choco pin add --name=chocolatey"
+      & $chocoExe pin add --name=chocolatey 2>&1 | Out-Null
+    }
+    # 'ignore' = no hacer nada
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "    Error aplicando choco self policy: $_"
+  }
 
-  # Reportar directamente al servidor
-  Send-ChocoRun -serverUrl $serverUrl -agentId $agentId `
-    -deploymentId $deployment.id -packageId $deployment.package_id -actionName $action `
-    -startedAt $startedAt -finishedAt $finishedAt `
-    -exitCode $exitCodeVal -stdoutText $stdoutVal -stderrText $stderrVal -errorText $errorMsg
+  # Update mode: upgrade-all
+  try {
+    $updateMode = $profile.update_mode
+    if ($updateMode -eq 'upgrade-all') {
+      Write-Info "    choco upgrade all -y (modo upgrade-all)"
+      & $chocoExe upgrade all -y 2>&1 | Out-Null
+    }
+    # 'managed-only' se maneja por los paquetes del deployment
+    # 'disabled' = no hacer nada
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "    Error en update mode: $_"
+  }
 
-  return $exitCodeVal
+  Write-Info "    Perfil '$($profile.name)' aplicado"
+}
+
+function Execute-ChocoDeployment([object]$deployment, [string]$serverUrl, [int]$agentId) {
+  <# Ejecuta un deployment group completo: aplica perfil + instala/actualiza/desinstala paquetes #>
+  $groupId = $deployment.deployment_group_id
+  $hadErrors = $false
+
+  # 1. Aplicar perfil si existe
+  if ($deployment.profile) {
+    Write-Info "  Aplicando perfil Chocolatey '$($deployment.profile.name)'..."
+    Apply-ChocoProfile -profile $deployment.profile
+  }
+
+  # 2. Procesar cada paquete del deployment
+  $packages = @($deployment.packages)
+  if (-not $packages -or $packages.Count -eq 0) {
+    Write-Info "  No hay paquetes en este deployment group"
+    return 0
+  }
+
+  $chocoExe = (Get-Command choco -ErrorAction SilentlyContinue).Source
+  if (-not $chocoExe) { $chocoExe = "$env:ProgramData\chocolatey\bin\choco.exe" }
+  if (-not (Test-Path $chocoExe)) {
+    Write-Err "  Chocolatey no instalado, no se pueden procesar paquetes."
+    return -1
+  }
+
+  foreach ($pkg in $packages) {
+    $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+    $action = $pkg.action
+    $pkgName = $pkg.package_name
+    $ver = $pkg.version
+    $chParams = $pkg.params
+
+    $chocoArgs = ''
+    switch ($action) {
+      'install'   { $chocoArgs = "install $pkgName -y" }
+      'upgrade'   { $chocoArgs = "upgrade $pkgName -y" }
+      'uninstall' { $chocoArgs = "uninstall $pkgName -y" }
+      default     { $chocoArgs = "install $pkgName -y" }
+    }
+    if ($ver -and $ver -ne 'latest') { $chocoArgs += " --version=$ver" }
+    if ($chParams) { $chocoArgs += " $chParams" }
+
+    $stdoutVal = ''; $stderrVal = ''; $exitCodeVal = -1; $errorMsg = $null
+    try {
+      Write-Info "  choco $chocoArgs"
+      $psi = New-Object System.Diagnostics.ProcessStartInfo
+      $psi.FileName  = $chocoExe
+      $psi.Arguments = $chocoArgs
+      $psi.UseShellExecute = $false
+      $psi.CreateNoWindow  = $true
+      $psi.RedirectStandardOutput = $true
+      $psi.RedirectStandardError  = $true
+
+      $proc = [System.Diagnostics.Process]::Start($psi)
+      $stdoutVal = $proc.StandardOutput.ReadToEnd()
+      $stderrVal = $proc.StandardError.ReadToEnd()
+      [void]$proc.WaitForExit(600000) # timeout 10min
+      $exitCodeVal = $proc.ExitCode
+    } catch {
+      if ("$_" -match "^EXIT:\d+$") { throw }
+      $errorMsg = "$_"
+    }
+
+    $maxLen = 50000
+    if ($stdoutVal.Length -gt $maxLen) { $stdoutVal = $stdoutVal.Substring(0, $maxLen) + "`n...[truncado]" }
+    if ($stderrVal.Length -gt $maxLen) { $stderrVal = $stderrVal.Substring(0, $maxLen) + "`n...[truncado]" }
+
+    $finishedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+
+    # Reportar resultado al servidor
+    Send-ChocoRun -serverUrl $serverUrl -agentId $agentId `
+      -deploymentGroupId $groupId -packageName $pkgName -actionName $action `
+      -startedAt $startedAt -finishedAt $finishedAt `
+      -exitCode $exitCodeVal -stdoutText $stdoutVal -stderrText $stderrVal -errorText $errorMsg
+
+    Write-Info "    $pkgName exit code: $exitCodeVal"
+    if ($exitCodeVal -ne 0) { $hadErrors = $true }
+  }
+
+  return $(if ($hadErrors) { 1 } else { 0 })
 }
 
 function Send-ChocoRun(
   [string]$serverUrl, [int]$agentId,
-  $deploymentId, $packageId, [string]$actionName,
+  $deploymentGroupId, [string]$packageName, [string]$actionName,
   [string]$startedAt, [string]$finishedAt,
   $exitCode, [string]$stdoutText, [string]$stderrText, [string]$errorText
 ) {
   $body = ConvertTo-Json -Depth 3 -Compress @{
-    deployment_id = $deploymentId
+    deployment_group_id = $deploymentGroupId
     agent_id      = $agentId
-    package_id    = $packageId
+    package_name  = $packageName
     action        = $actionName
     started_at    = $startedAt
     finished_at   = $finishedAt
@@ -1873,16 +1984,19 @@ function Invoke-Iterate {
     $script:IterationHadErrors = $true
   }
 
-  # ---- PASO 3: Chocolatey deployments ----
+  # ---- PASO 3: Chocolatey deployments (perfiles + paquetes) ----
   Write-Info "Paso 3/5: Consultando choco deployments..."
   try {
     $chocoDeployments = @(Get-PendingChocoDeployments -serverUrl $srvUrl -agentId $agentId)
     if ($chocoDeployments -and $chocoDeployments.Count -gt 0) {
-      Write-Info "$($chocoDeployments.Count) choco deployment(s) encontrados"
+      Write-Info "$($chocoDeployments.Count) choco deployment group(s) encontrados"
       foreach ($cd in $chocoDeployments) {
-        Write-Info "  Ejecutando choco $($cd.action) $($cd.package_name)..."
+        $groupId = $cd.deployment_group_id
+        $profileName = if ($cd.profile) { $cd.profile.name } else { 'sin perfil' }
+        $pkgCount = if ($cd.packages) { @($cd.packages).Count } else { 0 }
+        Write-Info "  Deployment group $groupId ($profileName, $pkgCount paquetes)..."
         $exitC = Execute-ChocoDeployment -deployment $cd -serverUrl $srvUrl -agentId $agentId
-        Write-Info "    Exit code: $exitC"
+        Write-Info "    Resultado: $(if ($exitC -eq 0) { 'OK' } else { "errores (code $exitC)" })"
         if ($exitC -ne 0) { $script:IterationHadErrors = $true }
       }
       Write-Success "Choco deployments procesados"
