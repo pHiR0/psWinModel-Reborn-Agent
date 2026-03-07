@@ -249,9 +249,9 @@ No tienes que modificar el contenido, nada mas que para marcarlo como hecho, si 
 > En Tokens de Registro en la columan "Org / Ubicación" y tambien en el popup de "Edicion de Token"
 + En el formulario de edicion de un Despliegue muestras los badges con los scripts del mismo, recuerda pornerle a esos badges el icono del tipo de script (fact o action)
 
-- En el formulario de Edicion de Token la organización y ubicacion no se está representando bien, el caso existente tiene asignado la organizacion ubicacion "🏢 pHiSoft > SJplace > 📍 Casa" y lo que se muestra es "🏢 pHiSoft > 📍 📍 Casa"
-- En el popup de selecion de script en Despliegues llamado "Agregar Script" , quiero que los Scripts que aparecen ahí vayan acompañado de su icono segun el tipo de script (action o fact)
-- En "Script Runs" en los tamaños de de la salida de los script, en aquellos que son de tipo facts, es cierto que en esta seccion se muestra el texto al estilo siguiente :
++ En el formulario de Edicion de Token la organización y ubicacion no se está representando bien, el caso existente tiene asignado la organizacion ubicacion "🏢 pHiSoft > SJplace > 📍 Casa" y lo que se muestra es "🏢 pHiSoft > 📍 📍 Casa"
++ En el popup de selecion de script en Despliegues llamado "Agregar Script" , quiero que los Scripts que aparecen ahí vayan acompañado de su icono segun el tipo de script (action o fact)
++ En "Script Runs" en los tamaños de de la salida de los script, en aquellos que son de tipo facts, es cierto que en esta seccion se muestra el texto al estilo siguiente :
 Fact Generado: Obtener Servicios
 Claves: services
-> Esto está bien, pero el tamaño si hay que registrar el tamaño real de la salida del script.
+> Esto está bien, pero el tamaño que hay que registrar es el tamaño real de la salida del script.

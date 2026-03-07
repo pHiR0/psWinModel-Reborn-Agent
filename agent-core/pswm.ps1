@@ -1208,6 +1208,9 @@ function Execute-ScriptWithOutput([hashtable]$deployment, [string]$serverUrl, [i
   }
 
   $maxLen = 50000
+  # Tamaño REAL del output (en bytes UTF-8) antes de cualquier truncado o resumen
+  $stdoutRealBytes = [System.Text.Encoding]::UTF8.GetByteCount($stdoutVal)
+  $stderrRealBytes = [System.Text.Encoding]::UTF8.GetByteCount($stderrVal)
   # Versión truncada solo para el registro en Script Runs (visualización en UI)
   $stdoutDisplay = if ($stdoutVal.Length -gt $maxLen) { $stdoutVal.Substring(0, $maxLen) + "`n...[truncado]" } else { $stdoutVal }
   $stderrDisplay = if ($stderrVal.Length -gt $maxLen) { $stderrVal.Substring(0, $maxLen) + "`n...[truncado]" } else { $stderrVal }
@@ -1230,7 +1233,7 @@ function Execute-ScriptWithOutput([hashtable]$deployment, [string]$serverUrl, [i
     -deploymentId $deployment.id -scriptId $deployment.script_id `
     -startedAt $startedAt -finishedAt $finishedAt `
     -exitCode $exitCodeVal -stdoutText $stdoutDisplay -stderrText $stderrDisplay -errorText $errorMsg `
-    -iterationId $iterationId
+    -iterationId $iterationId -stdoutBytes $stdoutRealBytes -stderrBytes $stderrRealBytes
 
   # Se devuelve el stdout COMPLETO (sin truncar) para que Invoke-Iterate pueda parsear el JSON de los facts
   return @{ ExitCode = $exitCodeVal; Stdout = $stdoutVal; Stderr = $stderrVal; Error = $errorMsg }
@@ -1270,6 +1273,9 @@ function Execute-Script([hashtable]$deployment, [string]$serverUrl, [int]$agentI
 
   # Truncar stdout/stderr si es demasiado largo (max 50 KB)
   $maxLen = 50000
+  # Capturar tamaño real ANTES de truncar
+  $stdoutRealBytes = [System.Text.Encoding]::UTF8.GetByteCount($stdoutVal)
+  $stderrRealBytes = [System.Text.Encoding]::UTF8.GetByteCount($stderrVal)
   if ($stdoutVal.Length -gt $maxLen) { $stdoutVal = $stdoutVal.Substring(0, $maxLen) + "`n...[truncado]" }
   if ($stderrVal.Length -gt $maxLen) { $stderrVal = $stderrVal.Substring(0, $maxLen) + "`n...[truncado]" }
 
@@ -1280,7 +1286,7 @@ function Execute-Script([hashtable]$deployment, [string]$serverUrl, [int]$agentI
     -deploymentId $deployment.id -scriptId $deployment.script_id `
     -startedAt $startedAt -finishedAt $finishedAt `
     -exitCode $exitCodeVal -stdoutText $stdoutVal -stderrText $stderrVal -errorText $errorMsg `
-    -iterationId $iterationId
+    -iterationId $iterationId -stdoutBytes $stdoutRealBytes -stderrBytes $stderrRealBytes
 
   return $exitCodeVal
 }
@@ -1290,7 +1296,8 @@ function Send-ScriptRun(
   $deploymentId, $scriptId,
   [string]$startedAt, [string]$finishedAt,
   $exitCode, [string]$stdoutText, [string]$stderrText, [string]$errorText,
-  [string]$iterationId = ''
+  [string]$iterationId = '',
+  [int]$stdoutBytes = 0, [int]$stderrBytes = 0
 ) {
   $body = ConvertTo-Json -Depth 3 -Compress @{
     deployment_id = $deploymentId
@@ -1303,6 +1310,8 @@ function Send-ScriptRun(
     stderr        = $stderrText
     error         = $errorText
     iteration_id  = $iterationId
+    stdout_bytes  = $stdoutBytes
+    stderr_bytes  = $stderrBytes
   }
   $uri = "$serverUrl/api/deployments/runs"
   try {
