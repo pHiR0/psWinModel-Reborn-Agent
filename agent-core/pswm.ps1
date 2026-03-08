@@ -30,7 +30,11 @@ param(
   [string]$Token = $null,
   [string]$OutDir = "$env:ProgramData\pswm-reborn",
   [int]$KeySize = 2048,
-  [int]$PollIntervalSeconds = 5
+  [int]$PollIntervalSeconds = 5,
+  [switch]$RemoveFiles,
+  [switch]$LogExtendedInfo,
+  [Parameter(ValueFromRemainingArguments=$true)]
+  [string[]]$ExtraArgs = @()
 )
 
 # ---------------------------------------------------------------------------
@@ -53,6 +57,15 @@ $ErrorActionPreference = 'Stop'
 
 #region ConfiguraciÃ³n
 $script:Version = "0.1.0-mvp"
+# Leer versión real del FileInfo si estamos compilados como .exe
+try {
+  $__exePath = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+  if ($__exePath -like '*.exe' -and $__exePath -notlike '*powershell*' -and $__exePath -notlike '*pwsh*') {
+    $__fi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($__exePath)
+    $__v = if ($__fi.FileVersion) { $__fi.FileVersion } elseif ($__fi.ProductVersion) { $__fi.ProductVersion } else { $null }
+    if ($__v) { $script:Version = $__v.Trim() }
+  }
+} catch { }
 $script:ConfigPath = Join-Path $OutDir "config.json"
 $script:PrivateKeyPath = Join-Path $OutDir "agent_private.pem"
 $script:PublicKeyPath = Join-Path $OutDir "agent_public.pem"
@@ -65,6 +78,12 @@ $script:UseLegacyRsa = $PSVersionTable.PSVersion.Major -lt 7
 
 # Modo GUI: cuando true, Exit-Cmd lanza una excepcion de string en vez de exit
 $script:GuiMode = $false
+# --log-extended-info: registra invocaciones de powershell.exe y choco.exe
+# La detección lee los args del proceso real para funcionar tanto en .ps1 como en pswm.exe compilado
+$_rawCmdLine = [System.Environment]::GetCommandLineArgs() -join ' '
+$script:LogExtendedInfo = $LogExtendedInfo.IsPresent `
+  -or ($ExtraArgs -match 'log.extended.info') `
+  -or ($_rawCmdLine -match '--log-extended-info')
 #endregion
 
 #region Exit Helper
@@ -1007,6 +1026,26 @@ function Invoke-UninstallService {
   Write-Host ""
   Write-Host "Nota: Los archivos en $($script:InstallDir) NO se han eliminado." -ForegroundColor Yellow
   Write-Host "Para eliminarlos manualmente: Remove-Item -Recurse -Force '$($script:InstallDir)'" -ForegroundColor Yellow
+
+  # Si se pasó --remove-files, eliminar los .exe del directorio de instalación
+  if ($RemoveFiles) {
+    Write-Host ""
+    Write-Info "Eliminando archivos .exe de '$($script:InstallDir)'..."
+    $exesToRemove = @('pswm.exe', 'pswm_svc.exe', 'pswm_updater.exe', 'pswm-tray.exe')
+    foreach ($exeName in $exesToRemove) {
+      $exePath = Join-Path $script:InstallDir $exeName
+      if (Test-Path $exePath) {
+        try {
+          Remove-Item -Path $exePath -Force -ErrorAction Stop
+          Write-Success "Eliminado: $exePath"
+        } catch {
+          Write-Err "  No se pudo eliminar $exePath : $_"
+        }
+      }
+    }
+    Write-Success "Archivos .exe eliminados de '$($script:InstallDir)'."
+  }
+
   Exit-Cmd 0
 }
 
@@ -1245,6 +1284,7 @@ function Execute-ScriptWithOutput([hashtable]$deployment, [string]$serverUrl, [i
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName  = 'powershell.exe'
     $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptFile`""
+    if ($script:LogExtendedInfo) { Write-Info "    [EXT-LOG] powershell.exe $($psi.Arguments)" }
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow  = $true
     $psi.RedirectStandardOutput = $true
@@ -1308,6 +1348,7 @@ function Execute-Script([hashtable]$deployment, [string]$serverUrl, [int]$agentI
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName  = 'powershell.exe'
     $psi.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptFile`""
+    if ($script:LogExtendedInfo) { Write-Info "    [EXT-LOG] powershell.exe $($psi.Arguments)" }
     $psi.UseShellExecute = $false
     $psi.CreateNoWindow  = $true
     $psi.RedirectStandardOutput = $true
@@ -1402,6 +1443,7 @@ function Get-ChocoInstalledPackages([string]$chocoExe) {
   <# Devuelve hashtable: nombre -> version #>
   $result = @{}
   try {
+    if ($script:LogExtendedInfo) { Write-Info "  [EXT-LOG] $chocoExe list -r" }
     $raw = & $chocoExe list -r 2>$null
     foreach ($line in $raw) {
       if ($line -match '^(.+?)\|(.+)$') {
@@ -1416,6 +1458,7 @@ function Get-ChocoPinnedPackages([string]$chocoExe) {
   <# Devuelve hashset de nombres de paquetes fijados #>
   $result = @{}
   try {
+    if ($script:LogExtendedInfo) { Write-Info "  [EXT-LOG] $chocoExe pin list -r" }
     $raw = & $chocoExe pin list -r 2>$null
     foreach ($line in $raw) {
       if ($line -match '^(.+?)\|') {
@@ -1430,6 +1473,7 @@ function Get-ChocoSources([string]$chocoExe) {
   <# Devuelve hashtable: nombre -> { url, priority, disabled } #>
   $result = @{}
   try {
+    if ($script:LogExtendedInfo) { Write-Info "  [EXT-LOG] $chocoExe source list -r" }
     $raw = & $chocoExe source list -r 2>$null
     foreach ($line in $raw) {
       $parts = $line -split '\|'
@@ -1449,6 +1493,7 @@ function Get-ChocoConfig([string]$chocoExe) {
   <# Devuelve hashtable: key -> value #>
   $result = @{}
   try {
+    if ($script:LogExtendedInfo) { Write-Info "  [EXT-LOG] $chocoExe config list -r" }
     $raw = & $chocoExe config list -r 2>$null
     foreach ($line in $raw) {
       # choco config list -r produce: key|value|descripcion
@@ -1465,6 +1510,7 @@ function Get-ChocoFeatures([string]$chocoExe) {
   <# Devuelve hashtable: nombre -> enabled(bool) #>
   $result = @{}
   try {
+    if ($script:LogExtendedInfo) { Write-Info "  [EXT-LOG] $chocoExe feature list -r" }
     $raw = & $chocoExe feature list -r 2>$null
     foreach ($line in $raw) {
       # choco feature list -r produce: nombre|Enabled|descripcion  o  nombre|Disabled|descripcion
@@ -1514,6 +1560,7 @@ function Get-ChocoOutdated([string]$chocoExe) {
   $result = @{}
   try {
     Write-Info "  [choco outdated] Ejecutando 'choco outdated -r' (consulta a servidores Chocolatey)..."
+    if ($script:LogExtendedInfo) { Write-Info "  [EXT-LOG] $chocoExe outdated -r" }
     $raw = & $chocoExe outdated -r 2>$null
     foreach ($line in $raw) {
       $parts = $line -split '\|'
@@ -1589,12 +1636,15 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
       if ($needUpdate) {
         $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
         try {
+          if ($script:LogExtendedInfo) { Write-Info "  [EXT-LOG] $chocoExe source remove --name=`"$srcName`" -y" }
           & $chocoExe source remove --name="$srcName" -y 2>&1 | Out-Null
           $addArgs = @('source', 'add', "--name=$srcName", "--source=$($desired.url)", '-y')
           if ($desired.priority) { $addArgs += "--priority=$($desired.priority)" }
           if ($desired.user) { $addArgs += "--user=$($desired.user)"; $addArgs += "--password=$($desired.pass)" }
+          if ($script:LogExtendedInfo) { Write-Info "  [EXT-LOG] $chocoExe $($addArgs -join ' ')" }
           & $chocoExe @addArgs 2>&1 | Out-Null
           if ($desired.disabled) {
+            if ($script:LogExtendedInfo) { Write-Info "  [EXT-LOG] $chocoExe source disable --name=`"$srcName`" -y" }
             & $chocoExe source disable --name="$srcName" -y 2>&1 | Out-Null
           }
           Write-Info "    Source '$srcName' aplicada"
@@ -1671,6 +1721,7 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
     if ($selfPolicy -eq 'upgrade') {
       $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
       Write-Info "  choco upgrade chocolatey -y"
+      if ($script:LogExtendedInfo) { Write-Info "  [EXT-LOG] $chocoExe upgrade chocolatey -y" }
       try {
         & $chocoExe upgrade chocolatey -y 2>&1 | Out-Null
       } catch { if ("$_" -match "^EXIT:\d+$") { throw }; Write-Info "    Error: $_"; $hadErrors = $true }
@@ -1681,6 +1732,7 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
       $isPinned = $pinnedPkgs.ContainsKey('chocolatey')
       if (-not $isPinned) {
         Write-Info "  choco pin add --name=chocolatey"
+        if ($script:LogExtendedInfo) { Write-Info "  [EXT-LOG] $chocoExe pin add --name=chocolatey" }
         try { & $chocoExe pin add --name=chocolatey 2>&1 | Out-Null } catch { if ("$_" -match "^EXIT:\d+$") { throw } }
       }
     }
@@ -1700,6 +1752,7 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
       # Si está pinned, desfijar primero
       if ($pinnedPkgs.ContainsKey($pkgNameLower)) {
         Write-Info "    Desfijando $($pkg.package_name) antes de desinstalar"
+        if ($script:LogExtendedInfo) { Write-Info "  [EXT-LOG] $chocoExe pin remove --name=`"$($pkg.package_name)`" -y" }
         try { & $chocoExe pin remove --name="$($pkg.package_name)" -y 2>&1 | Out-Null } catch { if ("$_" -match "^EXIT:\d+$") { throw } }
       }
       $exitCodeVal = Run-ChocoCmd -chocoExe $chocoExe -cmdArgs "uninstall $($pkg.package_name) -y" `
@@ -1729,6 +1782,7 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
       if ($exitCodeVal -ne 0) { $hadErrors = $true }
       # Pin inmediato si corresponde
       if ($pkg.pinned -and $exitCodeVal -eq 0) {
+        if ($script:LogExtendedInfo) { Write-Info "  [EXT-LOG] $chocoExe pin add --name=`"$($pkg.package_name)`" -y" }
         try { & $chocoExe pin add --name="$($pkg.package_name)" -y 2>&1 | Out-Null } catch { if ("$_" -match "^EXIT:\d+$") { throw } }
       }
     }
@@ -1744,9 +1798,11 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
     $isPinned = $pinnedPkgs.ContainsKey($pkgNameLower)
     if ($pkg.pinned -and -not $isPinned) {
       Write-Info "    Pin add: $($pkg.package_name)"
+      if ($script:LogExtendedInfo) { Write-Info "  [EXT-LOG] $chocoExe pin add --name=`"$($pkg.package_name)`" -y" }
       try { & $chocoExe pin add --name="$($pkg.package_name)" -y 2>&1 | Out-Null } catch { if ("$_" -match "^EXIT:\d+$") { throw } }
     } elseif (-not $pkg.pinned -and $isPinned) {
       Write-Info "    Pin remove: $($pkg.package_name)"
+      if ($script:LogExtendedInfo) { Write-Info "  [EXT-LOG] $chocoExe pin remove --name=`"$($pkg.package_name)`" -y" }
       try { & $chocoExe pin remove --name="$($pkg.package_name)" -y 2>&1 | Out-Null } catch { if ("$_" -match "^EXIT:\d+$") { throw } }
     }
   }
@@ -1848,6 +1904,7 @@ function Run-ChocoCmd(
   $stdoutVal = ''; $stderrVal = ''; $exitCodeVal = -1; $errorMsg = $null
   try {
     Write-Info "    CMD: $cmdLine"
+    if ($script:LogExtendedInfo) { Write-Info "  [EXT-LOG] $cmdLine" }
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName  = $chocoExe
     $psi.Arguments = $cmdArgs
@@ -2384,6 +2441,43 @@ function Invoke-Iterate {
     $script:IterationHadErrors = $true
   }
 
+  # ---- Auto-instalar Chocolatey si no está disponible ----
+  try {
+    if (-not (Get-ChocoExePath)) {
+      Write-Info "Chocolatey no encontrado. Intentando instalar desde configuración del servidor..."
+      $chocoScriptUri = "$srvUrl/api/settings/choco-install-script"
+      $scriptRes = Invoke-RestMethod -Uri $chocoScriptUri -Method Get -ErrorAction Stop
+      if ($scriptRes.script -and $scriptRes.script.Trim()) {
+        $tmpScript = [System.IO.Path]::GetTempFileName() + '.ps1'
+        [System.IO.File]::WriteAllText($tmpScript, $scriptRes.script, [System.Text.Encoding]::UTF8)
+        Write-Info "  Ejecutando script de instalación de Chocolatey..."
+        $psiChoco = New-Object System.Diagnostics.ProcessStartInfo
+        $psiChoco.FileName  = 'powershell.exe'
+        $psiChoco.Arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$tmpScript`""
+        if ($script:LogExtendedInfo) { Write-Info "    [EXT-LOG] powershell.exe $($psiChoco.Arguments)" }
+        $psiChoco.UseShellExecute = $false; $psiChoco.CreateNoWindow = $true
+        $psiChoco.RedirectStandardOutput = $true; $psiChoco.RedirectStandardError = $true
+        $procChoco = [System.Diagnostics.Process]::Start($psiChoco)
+        $chocoOut = $procChoco.StandardOutput.ReadToEnd()
+        $chocoErr = $procChoco.StandardError.ReadToEnd()
+        [void]$procChoco.WaitForExit(120000)
+        Write-Info "  Instalación Chocolatey exit code: $($procChoco.ExitCode)"
+        if ($chocoOut) { Write-Info "  STDOUT: $($chocoOut.Substring(0, [Math]::Min($chocoOut.Length, 500)))" }
+        if ($chocoErr) { Write-Info "  STDERR: $($chocoErr.Substring(0, [Math]::Min($chocoErr.Length, 200)))" }
+        # Refrescar PATH para que choco.exe sea encontrado sin reiniciar sesión
+        $env:PATH = [System.Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH','User')
+        try { Remove-Item $tmpScript -Force -ErrorAction SilentlyContinue } catch {}
+        if (Get-ChocoExePath) { Write-Success "  Chocolatey instalado correctamente." }
+        else { Write-Info "  No se pudo verificar la instalación de Chocolatey tras ejecutar el script." }
+      } else {
+        Write-Info "  No hay script de instalación de Chocolatey configurado en el servidor."
+      }
+    }
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "Error intentando instalar Chocolatey: $_ (continuando)"
+  }
+
   # ---- PASO 3: Chocolatey (config resuelta + ejecución por fases) ----
   Write-Info "Paso 3/5: Obteniendo configuración Chocolatey resuelta..."
   $resolvedPackages = $null
@@ -2897,6 +2991,7 @@ Comandos disponibles:
   gencert             Generar/regenerar par de claves RSA
   install             Instalar agente como servicio Windows (requiere .exe y admin)
   uninstall_service   Desinstalar servicio Windows del agente
+                      Opcion: --remove-files  Elimina tambien los .exe de la carpeta de instalacion
   svc                 Bucle de servicio (uso interno, ejecutado por el servicio)
   iterate             Ciclo operativo: recopila facts, ejecuta scripts/choco pendientes, sincroniza, check update
                       El servidor controla el modo de actualizacion:
@@ -2930,6 +3025,7 @@ Ejemplos:
   pswm.exe view_config
   pswm.exe install
   pswm.exe uninstall_service
+  pswm.exe uninstall_service --remove-files
   pswm.exe gencert -KeySize 4096
   pswm.exe iterate
   pswm.exe dummy_iterate
