@@ -282,6 +282,20 @@ function Invoke-QueuePost([string]$serverUrl, [string]$hostname, [string]$public
   $pub = Get-Content -Raw -Path $publicKeyPath
   $os = (Get-CimInstance -ClassName Win32_OperatingSystem).Caption
   $facts = @{ os = $os; user = $env:USERNAME; hostname = $hostname }
+  # Agregar marca, modelo y MACs para mostrar en la cola de aprobación
+  try {
+    $cs = Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction SilentlyContinue
+    if ($cs) {
+      $facts['manufacturer'] = $cs.Manufacturer
+      $facts['model']        = $cs.Model
+    }
+  } catch { }
+  try {
+    $adapters = Get-CimInstance -ClassName Win32_NetworkAdapter -Filter "AdapterTypeId = 0 AND MACAddress IS NOT NULL" -ErrorAction SilentlyContinue
+    if ($adapters) {
+      $facts['mac_addresses'] = @($adapters | ForEach-Object { "$($_.Name): $($_.MACAddress)" })
+    }
+  } catch { }
   $payload = @{ hostname = $hostname; public_key = $pub; facts = $facts } | ConvertTo-Json -Depth 5 -Compress
   $uri = "$serverUrl/api/agents/queue"
   
@@ -2528,6 +2542,34 @@ function Invoke-Iterate {
       if ("$_" -match "^EXIT:\d+$") { throw }
       Write-Info "Error sincronizando updater: $_ (continuando)"
     }
+  }
+
+  # ---- PASO 6: Re-generar facts post-iteración ----
+  # Re-enviamos los facts built-in para reflejar cualquier cambio producido durante la iteración
+  Write-Info "Paso 6: Re-generando facts (post-iteracion)..."
+  try {
+    $factsPost = Collect-Facts -serverUrl $srvUrl -agentId $agentId
+    $resPost = Send-Facts -serverUrl $srvUrl -agentId $agentId -facts $factsPost
+    if ($resPost) { Write-Success "Facts post-iteracion enviados: $($resPost.count) registros" }
+    # Re-ejecutar scripts de tipo fact si los hubo en esta iteracion
+    if ($null -ne $deployments -and $deployments.Count -gt 0) {
+      $factDepsPost = @($deployments | Where-Object { $_.script_type -eq 'fact' -and $_.enabled })
+      foreach ($dep in $factDepsPost) {
+        $depHash = @{ id=$dep.id; script_id=$dep.script_id; content=$dep.content; script_type='fact'; name=$dep.name }
+        $fr = Execute-ScriptWithOutput -deployment $depHash -serverUrl $srvUrl -agentId $agentId -iterationId $script:IterationId
+        if ($fr.ExitCode -eq 0 -and $fr.Stdout) {
+          try {
+            $fkey = ($dep.name -replace '[^a-zA-Z0-9_]','_').ToLower()
+            $fb = ConvertTo-Json -Depth 5 -Compress @{ facts = @(@{ fact_key=$fkey; value=$fr.Stdout.Trim(); source='script'; script_name=$dep.name }) }
+            Invoke-RestMethod -Uri "$srvUrl/api/facts/$agentId" -Method Post -Body $fb -ContentType 'application/json' -ErrorAction Stop | Out-Null
+            Write-Success "    Fact script post-iter actualizado: $fkey"
+          } catch { if ("$_" -match "^EXIT:\d+$") { throw } }
+        }
+      }
+    }
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "Error en facts post-iteracion: $_ (continuando)"
   }
 
   Write-Success "=== Iteracion completada ==="
