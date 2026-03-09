@@ -33,6 +33,7 @@ param(
   [int]$PollIntervalSeconds = 5,
   [switch]$RemoveFiles,
   [switch]$LogExtendedInfo,
+  [switch]$Install,
   [Parameter(ValueFromRemainingArguments=$true)]
   [string[]]$ExtraArgs = @()
 )
@@ -84,6 +85,14 @@ $_rawCmdLine = [System.Environment]::GetCommandLineArgs() -join ' '
 $script:LogExtendedInfo = $LogExtendedInfo.IsPresent `
   -or ($ExtraArgs -match 'log.extended.info') `
   -or ($_rawCmdLine -match '--log-extended-info')
+# --remove-files: eliminar archivos al desinstalar servicio
+$script:RemoveFiles = $RemoveFiles.IsPresent `
+  -or ($ExtraArgs -contains '--remove-files') `
+  -or ($_rawCmdLine -match '--remove-files')
+# --install: instalar servicio tras registro
+$script:InstallOnRegister = $Install.IsPresent `
+  -or ($ExtraArgs -contains '--install') `
+  -or ($_rawCmdLine -match '(?:^|\s)--install(?:\s|$)')
 #endregion
 
 #region Exit Helper
@@ -383,12 +392,38 @@ function Invoke-RegInitCheck {
     }
   }
 
-  # Polling
-  Write-Info "Polling cada $PollIntervalSeconds segundos (Ctrl+C para cancelar)..."
+  # --install: instalar servicio y salir (el servicio llamara pswm iterate periodicamente)
+  if ($script:InstallOnRegister) {
+    Write-Host ""
+    Write-Info "--install: agente en cola de aprobacion (queue_id: $qid)."
+    Write-Info "Instalando el servicio ahora. El propio servicio comprobara el estado de aprobacion."
+    if ((Test-IsCompiled) -and (Test-IsAdmin)) {
+      $existSvc = Get-Service -Name $script:ServiceName -ErrorAction SilentlyContinue
+      if (-not $existSvc) {
+        $svcOk = Install-ServiceCore
+        if ($svcOk) { Enable-ServiceAutostart }
+      } else {
+        Enable-ServiceAutostart
+      }
+    } else {
+      Write-Host "Nota: --install requiere pswm.exe compilado y ejecutado como Administrador." -ForegroundColor Yellow
+    }
+    Write-Host ""
+    Write-Success "Listo. Queue ID: $qid"
+    Write-Info "Una vez que el administrador apruebe el equipo en la consola web, el agente empezara a operar automaticamente."
+    Exit-Cmd 0
+  }
+
+  # Polling con intervalos adaptativos:
+  #   Iteraciones 1-3   -> 5 segundos
+  #   Iteraciones 4-23  -> 30 segundos
+  #   Iteraciones 24+   -> 60 segundos
+  Write-Info "Polling en espera de aprobacion (intervalos adaptativos, Ctrl+C para cancelar)..."
   try {
     $iterations = 0
     while ($true) {
-      Start-Sleep -Seconds $PollIntervalSeconds
+      $waitSec = if ($iterations -lt 3) { 5 } elseif ($iterations -lt 23) { 30 } else { 60 }
+      Start-Sleep -Seconds $waitSec
       $iterations++
       $st = Get-QueueStatus -serverUrl $srvUrl -id $qid
       if (-not $st) { 
@@ -493,6 +528,24 @@ function Invoke-RegToken {
       }
       Save-Config $finalCfg
       Write-Success "Configuracion guardada en: $script:ConfigPath"
+
+      # --install: instalar y arrancar servicio tras registro exitoso
+      if ($script:InstallOnRegister) {
+        Write-Host ""
+        Write-Info "--install: instalando/configurando servicio..."
+        if ((Test-IsCompiled) -and (Test-IsAdmin)) {
+          $existSvc = Get-Service -Name $script:ServiceName -ErrorAction SilentlyContinue
+          if (-not $existSvc) {
+            $svcOk = Install-ServiceCore
+            if ($svcOk) { Enable-ServiceAutostart }
+          } else {
+            Enable-ServiceAutostart
+          }
+        } else {
+          Write-Host "Nota: --install requiere pswm.exe compilado y ejecutado como Administrador." -ForegroundColor Yellow
+        }
+      }
+
       Exit-Cmd 0
     } else {
       Write-Err "Respuesta inesperada del servidor: $($resp | ConvertTo-Json -Compress)"
@@ -922,6 +975,106 @@ public class PswmService : ServiceBase {
   }
 }
 
+function Install-ServiceCore {
+  <#
+  .SYNOPSIS
+    Nucleo de instalacion del agente como servicio Windows.
+    No llama Exit-Cmd. Devuelve $true si exitoso, $false si fallo.
+  #>
+  $srcExe = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+  $destDir = $script:InstallDir
+  $destPswm = Join-Path $destDir 'pswm.exe'
+  $destSvc = Join-Path $destDir 'pswm_svc.exe'
+  $destUpdater = Join-Path $destDir 'pswm_updater.exe'
+
+  # Crear directorio de instalacion
+  if (-not (Test-Path $destDir)) {
+    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    Write-Success "Directorio creado: $destDir"
+  }
+
+  # Copiar binarios
+  Write-Info "Copiando binarios a $destDir..."
+  try {
+    Copy-Item -Path $srcExe -Destination $destPswm -Force
+    Write-Success "pswm.exe copiado"
+    Copy-Item -Path $srcExe -Destination $destSvc -Force
+    Write-Success "pswm_svc.exe copiado"
+    Copy-Item -Path $srcExe -Destination $destUpdater -Force
+    Write-Success "pswm_updater.exe copiado"
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Err "Error al copiar binarios: $_"
+    return $false
+  }
+
+  # Parar y eliminar servicio existente para recrearlo
+  $existingSvc = Get-Service -Name $script:ServiceName -ErrorAction SilentlyContinue
+  if ($existingSvc) {
+    Write-Info "El servicio '$($script:ServiceName)' ya existe (estado: $($existingSvc.Status)). Se reconfigurara."
+    if ($existingSvc.Status -eq 'Running') {
+      Stop-Service -Name $script:ServiceName -Force -ErrorAction SilentlyContinue
+      Write-Info "Servicio detenido."
+    }
+    sc.exe delete $script:ServiceName | Out-Null
+    Start-Sleep -Seconds 2
+    Write-Info "Servicio anterior eliminado."
+  }
+
+  # Crear servicio con inicio automatico
+  $svcBinPath = "`"$destSvc`" svc"
+  try {
+    New-Service -Name $script:ServiceName `
+               -BinaryPathName $svcBinPath `
+               -DisplayName $script:ServiceDisplayName `
+               -Description $script:ServiceDescription `
+               -StartupType Automatic | Out-Null
+    Write-Success "Servicio '$($script:ServiceName)' instalado (StartupType: Automatic)"
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Err "Error al instalar el servicio: $_"
+    return $false
+  }
+
+  # Configurar acciones de recuperacion: reinicio automatico en fallos
+  sc.exe failure $script:ServiceName reset= 86400 actions= restart/60000/restart/60000// | Out-Null
+  Write-Info "Acciones de recuperacion configuradas (reinicio automatico)."
+
+  return $true
+}
+
+function Enable-ServiceAutostart {
+  <#
+  .SYNOPSIS
+    Configura el servicio en inicio automatico y lo inicia si no estaba corriendo.
+  #>
+  $svc = Get-Service -Name $script:ServiceName -ErrorAction SilentlyContinue
+  if (-not $svc) {
+    Write-Err "Servicio '$($script:ServiceName)' no encontrado, no se puede configurar inicio automatico."
+    return
+  }
+  try {
+    Set-Service -Name $script:ServiceName -StartupType Automatic -ErrorAction Stop
+    Write-Success "Servicio configurado en inicio automatico (Automatic)."
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Err "No se pudo configurar inicio automatico: $_"
+  }
+  # Refrescar estado
+  $svc = Get-Service -Name $script:ServiceName -ErrorAction SilentlyContinue
+  if ($svc -and $svc.Status -ne 'Running') {
+    try {
+      Start-Service -Name $script:ServiceName -ErrorAction Stop
+      Write-Success "Servicio '$($script:ServiceName)' iniciado correctamente."
+    } catch {
+      if ("$_" -match "^EXIT:\d+$") { throw }
+      Write-Err "No se pudo iniciar el servicio: $_"
+    }
+  } elseif ($svc -and $svc.Status -eq 'Running') {
+    Write-Info "El servicio ya estaba en ejecucion."
+  }
+}
+
 function Invoke-Install {
   Write-Info "Instalando agente..."
 
@@ -938,70 +1091,21 @@ function Invoke-Install {
     Exit-Cmd 1
   }
 
-  $srcExe = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
-  $destDir = $script:InstallDir
-  $destPswm = Join-Path $destDir 'pswm.exe'
-  $destSvc = Join-Path $destDir 'pswm_svc.exe'
-  $destUpdater = Join-Path $destDir 'pswm_updater.exe'
-
-  # Create install directory
-  if (-not (Test-Path $destDir)) {
-    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-    Write-Success "Directorio creado: $destDir"
-  }
-
-  # Copy binaries
-  Write-Info "Copiando binarios a $destDir..."
-  Copy-Item -Path $srcExe -Destination $destPswm -Force
-  Write-Success "pswm.exe copiado"
-  Copy-Item -Path $srcExe -Destination $destSvc -Force
-  Write-Success "pswm_svc.exe copiado"
-  Copy-Item -Path $srcExe -Destination $destUpdater -Force
-  Write-Success "pswm_updater.exe copiado"
-
-  # Check if service already exists
-  $existingSvc = Get-Service -Name $script:ServiceName -ErrorAction SilentlyContinue
-  if ($existingSvc) {
-    Write-Info "El servicio '$($script:ServiceName)' ya existe (estado: $($existingSvc.Status)). Se reconfigurara."
-    if ($existingSvc.Status -eq 'Running') {
-      Stop-Service -Name $script:ServiceName -Force -ErrorAction SilentlyContinue
-      Write-Info "Servicio detenido."
-    }
-    # Remove and recreate to update binary path
-    sc.exe delete $script:ServiceName | Out-Null
-    Start-Sleep -Seconds 2
-    Write-Info "Servicio anterior eliminado."
-  }
-
-  # Install service using New-Service
-  $svcBinPath = "`"$destSvc`" svc"
-  try {
-    New-Service -Name $script:ServiceName `
-               -BinaryPathName $svcBinPath `
-               -DisplayName $script:ServiceDisplayName `
-               -Description $script:ServiceDescription `
-               -StartupType Manual | Out-Null
-    Write-Success "Servicio '$($script:ServiceName)' instalado (StartupType: Manual)"
-  } catch {
-    if ("$_" -match "^EXIT:\d+$") { throw }
-    Write-Err "Error al instalar el servicio: $_"
+  $ok = Install-ServiceCore
+  if (-not $ok) {
     Exit-Cmd 1
   }
 
-  # Configure failure/recovery actions: restart on first and second failure
-  sc.exe failure $script:ServiceName reset= 86400 actions= restart/60000/restart/60000// | Out-Null
-  Write-Info "Acciones de recuperacion configuradas (reinicio automatico)."
-
+  $destDir = $script:InstallDir
   Write-Host ""
   Write-Host "=== Instalacion completada ===" -ForegroundColor Green
   Write-Host "Directorio: $destDir"
   Write-Host "  pswm.exe        - Agente principal (acciones sobre el equipo)"
   Write-Host "  pswm_svc.exe    - Bucle de servicio (llama periodicamente a pswm.exe)"
   Write-Host "  pswm_updater.exe- Gestor de actualizaciones"
-  Write-Host "Servicio: $($script:ServiceName) (Manual)"
+  Write-Host "Servicio: $($script:ServiceName) (Automatic)"
   Write-Host ""
-  Write-Host "Para iniciar el servicio:  Start-Service $($script:ServiceName)" -ForegroundColor Cyan
-  Write-Host "Para que arranque con el sistema: Set-Service $($script:ServiceName) -StartupType Automatic" -ForegroundColor Cyan
+  Enable-ServiceAutostart
   Exit-Cmd 0
 }
 
@@ -1037,27 +1141,39 @@ function Invoke-UninstallService {
     Exit-Cmd 1
   }
 
-  Write-Host ""
-  Write-Host "Nota: Los archivos en $($script:InstallDir) NO se han eliminado." -ForegroundColor Yellow
-  Write-Host "Para eliminarlos manualmente: Remove-Item -Recurse -Force '$($script:InstallDir)'" -ForegroundColor Yellow
-
-  # Si se pasó --remove-files, eliminar los .exe del directorio de instalación
-  if ($RemoveFiles) {
+  # Si se pasó --remove-files, eliminar el directorio de instalación completo
+  if ($script:RemoveFiles) {
     Write-Host ""
-    Write-Info "Eliminando archivos .exe de '$($script:InstallDir)'..."
-    $exesToRemove = @('pswm.exe', 'pswm_svc.exe', 'pswm_updater.exe', 'pswm-tray.exe')
-    foreach ($exeName in $exesToRemove) {
-      $exePath = Join-Path $script:InstallDir $exeName
-      if (Test-Path $exePath) {
-        try {
-          Remove-Item -Path $exePath -Force -ErrorAction Stop
-          Write-Success "Eliminado: $exePath"
-        } catch {
-          Write-Err "  No se pudo eliminar $exePath : $_"
+    Write-Info "Eliminando directorio de instalacion '$($script:InstallDir)'..."
+    if (Test-Path $script:InstallDir) {
+      try {
+        Remove-Item -Path $script:InstallDir -Recurse -Force -ErrorAction Stop
+        Write-Success "Directorio '$($script:InstallDir)' eliminado correctamente."
+      } catch {
+        if ("$_" -match "^EXIT:\d+$") { throw }
+        Write-Err "No se pudo eliminar el directorio '$($script:InstallDir)': $_"
+        Write-Host "Intentando eliminar solo los .exe..." -ForegroundColor Yellow
+        $exesToRemove = @('pswm.exe', 'pswm_svc.exe', 'pswm_updater.exe', 'pswm-tray.exe')
+        foreach ($exeName in $exesToRemove) {
+          $exePath = Join-Path $script:InstallDir $exeName
+          if (Test-Path $exePath) {
+            try {
+              Remove-Item -Path $exePath -Force -ErrorAction Stop
+              Write-Success "Eliminado: $exePath"
+            } catch {
+              Write-Err "  No se pudo eliminar $exePath : $_"
+            }
+          }
         }
       }
+    } else {
+      Write-Info "Directorio '$($script:InstallDir)' ya no existe, nada que eliminar."
     }
-    Write-Success "Archivos .exe eliminados de '$($script:InstallDir)'."
+  } else {
+    Write-Host ""
+    Write-Host "Nota: Los archivos en $($script:InstallDir) NO se han eliminado." -ForegroundColor Yellow
+    Write-Host "Para eliminarlos: pswm.exe uninstall_service --remove-files" -ForegroundColor Yellow
+    Write-Host "  o manualmente: Remove-Item -Recurse -Force '$($script:InstallDir)'" -ForegroundColor Yellow
   }
 
   Exit-Cmd 0
@@ -2345,6 +2461,63 @@ function Invoke-Iterate {
 
   # Validar config
   $cfg = Get-Config
+
+  # Verificar si el agente esta en estado "queued" (queue_id pero sin agent_id)
+  $hasQueueId = $cfg -and $cfg.PSObject.Properties['queue_id'] -and $cfg.queue_id
+  $hasAgentId = $cfg -and $cfg.PSObject.Properties['agent_id'] -and $cfg.agent_id
+
+  if ($hasQueueId -and -not $hasAgentId) {
+    $srvUrlCheck = Get-ServerUrl
+    $qid = [int]$cfg.queue_id
+    Write-Info "Agente en cola de aprobacion (queue_id: $qid). Iniciando polling hasta aprobacion/rechazo..."
+    Write-Info "Intervalos adaptativos: iter 1-3 -> 5s | iter 4-23 -> 30s | iter 24+ -> 60s"
+    Write-Info "Pulse Ctrl+C para cancelar."
+    $pollIter = 0
+    $approved = $false
+    try {
+      while ($true) {
+        $waitSec = if ($pollIter -lt 3) { 5 } elseif ($pollIter -lt 23) { 30 } else { 60 }
+        Write-Info "Esperando ${waitSec}s... (iter $($pollIter + 1))"
+        Start-Sleep -Seconds $waitSec
+        $pollIter++
+
+        $qst = Get-QueueStatus -serverUrl $srvUrlCheck -id $qid
+        if (-not $qst) {
+          Write-Host "." -NoNewline
+          continue
+        }
+
+        Write-Host ""
+        Write-Info "Estado actual: $($qst.status)"
+
+        if ($qst.status -eq 'approved') {
+          Write-Success "Aprobado! Agent ID: $($qst.agent_id). Actualizando configuracion..."
+          $approvedCfg = @{
+            agent_id    = $qst.agent_id
+            hostname    = $env:COMPUTERNAME
+            server_url  = $srvUrlCheck
+            approved_at = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+          }
+          Save-Config $approvedCfg
+          Write-Success "Configuracion guardada. Continuando con la iteracion..."
+          $cfg = Get-Config
+          $approved = $true
+          break
+        } elseif ($qst.status -eq 'rejected') {
+          $msg = if ($qst.rejection_message) { $qst.rejection_message } else { "Sin mensaje" }
+          Write-Err "Equipo rechazado: $msg. El agente no puede operar."
+          Exit-Cmd 4
+        }
+        # Si sigue pending, continua el bucle
+      }
+    } catch {
+      if ("$_" -match "^EXIT:\d+$") { throw }
+      Write-Err "Error durante polling de aprobacion: $_"
+      Exit-Cmd 1
+    }
+    if (-not $approved) { Exit-Cmd 0 }
+  }
+
   if (-not $cfg -or -not $cfg.PSObject.Properties['agent_id'] -or -not $cfg.agent_id) {
     Write-Err "El agente no esta registrado. Ejecute 'pswm.exe reg_init_check' primero."
     Exit-Cmd 1
@@ -3025,15 +3198,19 @@ Uso: pswm.exe <comando> [opciones]
 
 Comandos disponibles:
   reg_init_check      Registrar agente via Cola de Aprobacion (genera claves si necesario)
+                      Sin --install: hace polling hasta que el admin apruebe/rechace (intervalos adaptativos)
+                      Con --install: instala el servicio y sale. El servicio verificara la aprobacion en cada iterate.
   reg_token           Registrar agente via Token de Registro (uso: reg_token -Token "xxx" o reg_token "xxx")
+                      Opcion: --install  Como en reg_init_check, instala el servicio tras registro exitoso
   check_status        Verificar conectividad y estado del agente
   view_config         Mostrar configuracion actual (config.json)
   archive_config      Archivar config + claves a ZIP y eliminar originales
   restore_config      Restaurar config desde ZIP (solo si no existen archivos locales)
   gencert             Generar/regenerar par de claves RSA
   install             Instalar agente como servicio Windows (requiere .exe y admin)
+                      Configura el servicio en inicio automatico (Automatic) y lo arranca
   uninstall_service   Desinstalar servicio Windows del agente
-                      Opcion: --remove-files  Elimina tambien los .exe de la carpeta de instalacion
+                      Opcion: --remove-files  Elimina el directorio de instalacion completo
   svc                 Bucle de servicio (uso interno, ejecutado por el servicio)
   iterate             Ciclo operativo: recopila facts, ejecuta scripts/choco pendientes, sincroniza, check update
                       El servidor controla el modo de actualizacion:

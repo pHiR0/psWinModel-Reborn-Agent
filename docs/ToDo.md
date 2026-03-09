@@ -108,3 +108,45 @@ Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManage
 + Generación de Suite de Pruebas
 >Redacta una suite completa de pruebas unitarias y de integración que cubra el 100% de los casos de uso de este módulo, incluyendo casos límite y edge cases.
 # Completada: 197 tests (18 unit + 179 integration) — tests/unit.test.js + tests/integration.test.js + tests/helpers.js. Se corrigió bug de orden de rutas en deployments.js. Commit cc3d510.
+
++ Estoy intentaando arrancar la consola web en local y me sale un error
+PS C:\MyRepos\psWinModel-Reborn-Server\web-console> npm run dev
+
+> web-console@0.0.1 dev
+> vite dev
+
+error when starting dev server:
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package '@sveltejs/adapter-node' imported from C:\MyRepos\psWinModel-Reborn-Server\web-console\svelte.config.js   
+    at Object.getPackageJSONURL (node:internal/modules/package_json_reader:316:9)
+    at packageResolve (node:internal/modules/esm/resolve:768:81)
+    at moduleResolve (node:internal/modules/esm/resolve:858:18)
+    at defaultResolve (node:internal/modules/esm/resolve:990:11)
+    at #cachedDefaultResolve (node:internal/modules/esm/loader:757:20)
+    at ModuleLoader.resolve (node:internal/modules/esm/loader:734:38)
+    at ModuleLoader.getModuleJobForImport (node:internal/modules/esm/loader:317:38)
+    at #link (node:internal/modules/esm/module_job:208:49)
+# Solucionado: ejecutar npm install en web-console/. El paquete @sveltejs/adapter-node estaba en devDependencies pero no instalado.
++ Al pswm tanto al reg_init_check como al reg_token le añadimos el parametro --install el cual quiere decir que si se ha registrado bien, aunque esté esperando por aprobacion, instale automaticamente los servicios, si no están instalados.
+# Implementado: --install detectado via raw cmdline (funciona compilado). En reg_init_check se instala el servicio antes del polling. En reg_token se instala tras registro exitoso.
++ Igualmente en "pswm install", y tambien en psem reg_init o reg_token con parametro --install una vez que se ha registrado e instaldo el servicio, pone el servicio en inicio automatico, y lo inicia.
+# Implementado: Enable-ServiceAutostart() llamado tras instalar. pswm install ahora usa StartupType Automatic y arranca el servicio automaticamente.
++ Revisa "pswm unistall_service --remove-files" porque lo he ejecutado y no ha eliminado los archivos
+PS C:\MyRepos\psWinModel-Reborn-Agent\build> .\pswm.exe uninstall_service --remove-files
+[INFO] Desinstalando servicio...
+[OK] Servicio 'pswm-reborn' eliminado correctamente.
+
+Nota: Los archivos en C:\Program Files\pswm-reborn NO se han eliminado.
+Para eliminarlos manualmente: Remove-Item -Recurse -Force 'C:\Program Files\pswm-reborn'
+PS C:\MyRepos\psWinModel-Reborn-Agent\build> .\pswm.exe uninstall_service --remove-files
+PS C:\MyRepos\psWinModel-Reborn-Agent\build> Remove-Item -Recurse -Force 'C:\Program Files\pswm-reborn'
+# Corregido: $script:RemoveFiles detectado via raw cmdline (igual que --log-extended-info). Ahora elimina el directorio completo con Remove-Item -Recurse -Force. La nota 'NO eliminados' solo aparece cuando NO se pasa --remove-files.
++ En la seccion "Cola de aprobación" en el mismo SideMenu, quiero aparezca un indicador como un contador de notificaciones tipico de android, el que se parece un boliche rojo con un numero dentro, siempre que hayan equipos en cola esperando. Si "Agentes" está colapsed y no se "Cola de aprobación" en casos como este lo despliegas automáticamente.
+# Implementado: badge rojo con contador junto a 'Cola de Aprobación' en ambos bloques del menu. Polling cada 60s. Auto-expand de 'Agentes' cuando hay pendientes. Archivo: web-console src/routes/(app)/+layout.svelte
+
++ A pswm reg_init_check si le añadimos--install , no vamos a iterar hasta que sea aprobado o rechazado el equipo, lo que hace es tras que se hayan generados las claves y se haya guardado el queue Id en el config, procedemo a instalar el servicio, y ya luego el propio servicio llamará pswm iterate, con algunos cambios que quiero hacer.
+# Implementado: cuando --install esta activo, reg_init_check instala el servicio y sale (Exit-Cmd 0). No hace polling. El servicio llamara iterate periodicamente.
++ A pswm reg_init_check mientras está status pending, hace una comprobación cada 5 segundos, y vamos a cambiar ese comportamiento.
+> Las primeras 3 iteraciones siguen con un intervalo de 5 segundos, luego las siguientes 20 iteraciones cada 30 segundos, y desde esas en adelante, cada 60 segundos (1 minuto)
+# Implementado: intervalos adaptativos en la logica de polling de reg_init_check (sin --install). 5s/30s/60s.
++ Con esto cada vez que pswm iterate se lance, debe comprobar que el agente no esá en Queued, si esta queued, entonces, el propio pswm iterate lanza un pswm reg_init_check ya que si no es aprobado en la consola po podrá iterar.
+# Implementado: al inicio de Invoke-Iterate se comprueba queue_id sin agent_id. Si pending -> inicia polling inline con intervalos adaptativos (5s/30s/60s) hasta aprobacion o rechazo, y luego continua la iteracion normalmente. Si rechazado, sale con error.
