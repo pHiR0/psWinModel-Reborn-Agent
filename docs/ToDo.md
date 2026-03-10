@@ -238,3 +238,13 @@ Could not migrate old update settings: oldVersion is not defined
 + En los popups del "Selector de Agente" , aparece un texto indicando que Variante es, esto ya no aplica era solo para el momento de test, elimina ese texto en todos lo sitios que se use.
 + En los popups del "Selector de Grupo" , aparece un texto indicando que Variante es, esto ya no aplica era solo para el momento de test, elimina ese texto en todos lo sitios que se use.
 + Cuando estamos crando un nuevo despliegue de powershell, y selecciono "Localizaciones" , cuando le doy al botón "Agregar Localización" no pasa nada, y debería mostrar el "Selector de Ubicacion" predeterminado. Cuando edito un despliegue de este tipo si aparece el "Selector de Ubicacion" correcto.
+
+- En la gestion de usuarios me gustaría ver que sesiones "abiertas" tiene cada usuario, con IP de orgigen de cada sesion y poder cerrarlas todas o granularmente.
+- Si un paquete de choco entra en conflicto por estar en un "Despliegue de choco" de tipo Agentes, y un despliegue de choco de tipo "Grupo", tendrá preferencia el tipo grupo.
+- Si aún así hay un paquete que para un agene entra en conflicto porque está en dos "Despliegues de Choco" tipo Grupo, vamos a implementar el OrderId para el despliegue de este tipo, que será numérico, y desde 0 hacia arriba, hasta el máximo que admita un tipo integer. A la hora de desempatar, el que tenga el numero menor será el elegido. Si aún así hay un empate, pues se elige el primero que se creó.
+- En los despliegue de chocolatey, en los paquetes quiero agregar una nueva accion, que no se como llamarla, pero básucamente es que en paquete que hayan sido instalados , bien manualmente por el usuario, o por cualquier otro metodo, entonces pasa a ser gestionado, ajustando la version especifica si la tiene, usando los parametros indicados para actualziar si lo tiene, fijarlo si está establecido, y entrar en las politicas de Actualizaciones del perfil.
+- Quiero ire preparando en un alarde transparencia, que se cree un TrayIcon en la bandeja de la barra de inicio, con un mení de opciones que por ahora será "Resincronizar" , que lanzaría un puppet iterate a demanda , mientras haya una iteracion en curso esta opcion estará deshabilitada Greyed ,y "Salir" que lo que haces es cerrar el tray y parar el servicio, hasta que el equipo vuelva a ser reiniciado.
+> Para todo esto si no lo tienes claro como sería mejor puedes consultarme.
+- Quiero que se guarde un registro de todas las veces que se ha descargado el pswm.exe con el enlacde de descarga pública, registrando fecha y hora ip remota, y la version pswm.exe
+> Pondo dentro de "Versiones de Agente" pero en una pestaña nueva, limita el regitro a los ultimos 200 mas recientes, el resto eliminalos de la BDD.
+
