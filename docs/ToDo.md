@@ -154,7 +154,7 @@ PS C:\MyRepos\psWinModel-Reborn-Agent\build> Remove-Item -Recurse -Force 'C:\Pro
 + Ahora quiero estandarizar el popup que utilizamos para "Seleccionar Organición y Ubicación" , para usarlo en todas las partes que sea necesario. Vamos a partir primero iterando sobre el que utilizamos para "Asignar" Ubicacion en el formulario de "Editar Agente", quiero que lo mejores, que sea mas intuitivo y ofrezca mejor experiencia de usuario, además usa los emojis propicios dentro de la interfaz como lo son 🏢 y 📍, si quieres puedes crear 3 variantes, para probarlas, pon por ahora un botón "Asignar" para cada variante. Despues cuando elijamos eliminamos los botones tambien.
 # Implementado: LocationPickerModal.svelte creado con 3 variantes (A: panel dividido con búsqueda+TreeNode, B: cascada por pasos con tarjetas org→lista ubicaciones, C: búsqueda unificada con pills breadcrumb). Integrado en edit/+page.svelte con 3 botones "Variante A/B/C". Limpiadas variables e imports no usados (orgModalOpen, expandedNodes, orgLoading, toggleNode, buildTree, selectLocationFromTree, import TreeNode). Archivo: web-console/src/lib/LocationPickerModal.svelte
 
-- Me gusta la variante A, Elimina las variantes B y C y sus botones. Luego usa la variante seleccionada, en todos lo sitios donde se use un "Selector de Ubicación", ahora mismo te puedo decir lo que se, pero seguro que hay alguno mas, son:
++ Me gusta la variante A, Elimina las variantes B y C y sus botones. Luego usa la variante seleccionada, en todos lo sitios donde se use un "Selector de Ubicación", ahora mismo te puedo decir lo que se, pero seguro que hay alguno mas, son:
 > En Cola de aprobación en popup que se muestra cuando aprobamos un agente
 > En "Crear Token de registro"
 > En despliegues de Scripts de powershell tipo location. (Formulario de nuevo y edicion)
@@ -162,4 +162,64 @@ PS C:\MyRepos\psWinModel-Reborn-Agent\build> Remove-Item -Recurse -Force 'C:\Pro
 > Revisa por si hay alguno mas...
 > En todos usar el Selector de Ubicacion de Variante A
 > Documenta donde veas oportuno, para que si en el futuro tienes que implementar otro selector de Ubicacion uses el mismo.
-- Cuando usamos el botón Clonar, no quiero que lo clone directamente, es decir que cree el registo, sino que abra el formulario de nuevo con los datos prerellenados igual del original que vamos a clonar.
++ Cuando usamos el botón Clonar, no quiero que lo clone directamente, es decir que cree el registo, sino que abra el formulario de nuevo con los datos prerellenados igual del original que vamos a clonar.
+
++ En la vista "Gestion de Agentes" en Org / Ubicación tenemos que susar tambien el "Selector de Ubicación" que hemos elegido anteriormente.
++ Quiero tambien estandarizar el badge que usamos para mostrar una ubicacion, ya seleccionada.
+> Por ejemplo el badge que utilizamos para representar una ubicacion que  usamos en el campo "Ubicación" en los "Detalles del Agente" , es la que mas me gusta, así que lo llamaremos el "badge de ubicacion predeterminado". Debemos usarla en todos los sitios que estamos representando una ubicacion, asi lo que tengo en mente son:
+> "Gestion de Agentes" , aqui tenemos 2 columnas una llamada Organización y otra Ubicación, podemos prescindir de la columna Organización y usar unicamente la columna Ubicación, con el "badge de ubicación predeterminado"
+> cuando estamos editando un agente en "Editar Agente", tambien debemos usar este badge
+> En "Crear token de Registro"
+> En Despliegues de Powershell, tanto de tipo Localizaciones, como tipo Organizaciones (tanto en el formulario de creación o de edición)
+> En Despliegues de Chocom, tanto de tipo Localizaciones, como tipo Organizaciones (tanto en el formulario de creación o de edición)
+> Tambien en las vistas principal de "Despliegues Choco" en el listado en la columna "Objetivo" cuando es tipo Organizaciones, o Localizaciones
+> Revisa a ver si hay algun sitio mas donde representamos localizaciones y usa ese badge
++ El Listado de "Despliegues" de powershell, quita la columa "Single Run" y pon "Objetivo" igual que en el listado de "Despliegues Choco"
+> En La columna los scripts, tiene un badge que representa a cada script con su icono representativo, pon el icono a la izquierda del nombre del script.
+> Arriba el buscador de despliegues tiene un desplegable para elegir ubicaciones, vamos a usar el mismo que usamos en "Todos los agentes" > ""Gestion de Agentes", con el popup para seleccionar una ubicacion, usando el popup de "Selector de Ubicación" que hemos elegido.
++ Cuando creamos un "Token de Registro" ya sea el Estándar o el "Código Corto" cuando seleccionamos una fecha pon por defecto la hora 23:59 si no está indicada o sea si está "--:--".
++ Tambien me gustaría estandarizar "Selector de Grupo" y un "Selector de Agentes".
+> 5 variantes de cada uno en la url /selectores_test para probar los que me sugieres y luego elegimos uno de cada, o iteramos para hacer el definitivo.
+> Ambos popup tienen que tener la posibilidad de recargar desde el mismo popup, por si se por ejemplo se ha creado un agente nuevo mientras está abierto, tambien para grupos, no pongas un enlaces de texto, sino un icono representativo para ello.
+> Para el popup de Selector de Agentes , ademas de buscar por nombre tambien tenemos que tener la posiblidad de filtrar por ubicación usando el "Selector de Ubicaciones" definido en la documentación.
++ En la vista de "Todos los agentes" > ""Gestion de Agentes" , agrega la columna "Version Agente"
++ Para los usuarios crea todo el sistema para inmplementar MFA por QR compatible con Google Authenticator.
+> Como por ahora no tenemos soporte par email, para recuperar contraseña, crea un script que seráunicamente de acceso desde la consola del servidor por comando para eliminar el MFA de un usuario, en este caso tambien es imperativo poner una contraseña nueva, que la genere el mismo script de 12 caracteres, solo letras y numero mayusculas y minusculas, sin usar caracteres ambiguos.
++ En "Versiones del Agente", quiero tener la posibilidad de seleccionar uno de las versiones del agente, para poder descargarla desde la url /agent a la que se podrá acceder unicamente para tal menester para descargar esa version
+> En /agent aparecerá una web con un botón para descargar el pswm.exe indicando tambien la version y los hashes, si pulsas el botón lleva a la descarga que estará en /agent/pswm.exe (esta url tambien puede ser utilizada para descargarlo directamente desde scripts externos)
+> Si NO hay version seleccionada para descargar pulicamente no estará disponible el enlace /agent/pswm.exe
+> La version publicada por este método no tene que coincidir con la version publicada para descargar en upgrades o mandatory desde pwsm_updater.exe
+> El enlace /agent/pswm.exe lo ofrece la app de api server, no la de la web-console
+
++ cuando seleccionamos una ubicacion en Gestion de Agentes, hay que buscar por los agentes de esa ubicaciony de todas las que estén (sean hijos) de esa ubicacion.
+
++ En "Desplieges" de powershell en la columna Objetivo, en los que son de tipo location o organizacion, hay que usar el "badge de ubicación predeterminado"
++ En los despliegues de tipo organizaciones, tenemos que estandarizar tambien el popup de seleccion de Organizacion, podemos basarlo en "Selector de Ubicaciones" , pero permitiendo unicamente la seleccion de "Organizaciones", incluye tambien 5 variaste para el "Selector de Organizaciones" en /selectores_test
++ No implementaste esto que te dije antes, "Cuando creamos un "Token de Registro" ya sea el Estándar o el "Código Corto" cuando seleccionamos una fecha pon por defecto la hora 23:59 si no está indicada o sea si está "--:--""
+> si quieres en el selector de fecha, que solo sea fecha, no hace falta indicar la hora, eso si , almacenamos la fecha pero la hora siempre las 23:59
++ Lo que implementamos para la descarga pública sin autenticar del agente, en la parte de la web-console cuando vas /agent muestra la interfaz con el boton de descarga y demás datos, que redirecciona a la url /agent/pswm.exe del servidor
+> En el servidor /agent dará error 404 ,  pero /agent/pswm.exe desacarga directamente la version pública del mismo
+> En el web-console /agent mostrará la UI con el botón demás datos para descargar el agente y el botón redireccionará a /agent/pswm.exe del servidor.
++ Para todas la variantes de "Selectores de Agente", cuando quiero filtrar por ubicacion:
+> Tengo que poder seleccionar unicamente la Organización si quiero
+> Si selecciono una organización o una ubicacion cuaddo filtre por ubicacion, quiere decir que están incluidos los agentes de esa ubiaciones y los agentes de todos los hijos de esa ubicacion.
++ Documenta como se hace un reseteo del mfa con el script creado a tal fin.
++ Cuando itento configurar mi MFA en la web me sale unicamente la palabra "internal" en un recuadro y en la consola sale esto:
+[nodemon] starting `node src/index.js`
+[WARN] No JWT secret configured. Using insecure default — ONLY acceptable in development.
+Server listening on port 3000
+Could not migrate old update settings: oldVersion is not defined
+[MFA] setup error: TypeError: Cannot read properties of undefined (reading 'generateSecret')
+    at C:\MyRepos\psWinModel-Reborn-Server\src\routes\mfa.js:34:34
+    at Layer.handle [as handle_request] (C:\MyRepos\psWinModel-Reborn-Server\node_modules\express\lib\router\layer.js:95:5)   
+    at next (C:\MyRepos\psWinModel-Reborn-Server\node_modules\express\lib\router\route.js:149:13)
+    at authMiddleware (C:\MyRepos\psWinModel-Reborn-Server\src\middleware\auth.js:62:5)
+
+- De selectores_test :
+> El "Selector de Grupo" predeterminado será la variante E
+> El "Selector de Agente" predeterminado será la variante B , pero recuerda que en la columna Ubicación tenemos que usar el "badge de ubicacion predeterminado" que elegimos anteriormente.
+> El "Selector de Orgnizacion" predeterminado será la variante E
+> Busca en todo el proyecto donde se usa Selectores de "Grupo","Agentes" y/o "Organizaciones" y cambialos por los predeterminados que acabamos de definir
+> Documenta los "Selectores" prederminados que hemos seleccionado para cada cosa.
+- Documenta tambien si no lo esta, cual es el "badge de ubicacion predeterminado" elegido anteriormante y el "Selector de Ubicaciones" si no no lo están ya.
+- Elimina el acceso a /selectores_test una vez esté todo implementado y documentado.
