@@ -231,5 +231,10 @@ Could not migrate old update settings: oldVersion is not defined
 > Haz una busqueda un poco mas exaustiva a ver si alguno de los selectores predeterminados no se está usando en algún sitio del codigo donde tiene cabida y debería usarse.
 + En la edicion de angente "Editar Agente", tiene una seccion para seleccionar los grupos a los que pertenece, y es una lista con todos los grupos y un checkbox para cada uno, esto no es muy comodo de usar cuando haya muchos grupos. Quiero que uses Badges con los grupos a los que está asignado el agente, y cada badge puede ser elimnado con el boton X que tendrá cada uno, luego en la misma zona un botón o badge de accion que diga seleccionar grupo o agregar a grupo, y usamos el "Selector de Grupos" predeterminado para añadirlo a esos grupos.
 
-- En el "Selector de Agentes" predeterminado, en el popup la columna ubicación debe mostrar el "badge de ubicación predeterminado" con toda la ruta completa, ahora mismo solo estas mostrando la Organización y la localizacion final, no muestra las intermedias, el badge debe indicar la ruta completa.
-- en la "Gestion de Grupos" en el botón "Gestionar Agente" debemos usar el "Selector de Agentes" predeterminado.
++ En el "Selector de Agentes" predeterminado, en el popup la columna ubicación debe mostrar el "badge de ubicación predeterminado" con toda la ruta completa, ahora mismo solo estas mostrando la Organización y la localizacion final, no muestra las intermedias, el badge debe indicar la ruta completa.
++ en la "Gestion de Grupos" en el botón "Gestionar Agente" debemos usar el "Selector de Agentes" predeterminado.
+
++ En los popups del "Selector de Grupo" , aparece un texto indicando que Variante es, esto ya no aplica era solo para el momento de test, elimina ese texto en todos lo sitios que se use.
++ En los popups del "Selector de Agente" , aparece un texto indicando que Variante es, esto ya no aplica era solo para el momento de test, elimina ese texto en todos lo sitios que se use.
++ En los popups del "Selector de Grupo" , aparece un texto indicando que Variante es, esto ya no aplica era solo para el momento de test, elimina ese texto en todos lo sitios que se use.
++ Cuando estamos crando un nuevo despliegue de powershell, y selecciono "Localizaciones" , cuando le doy al botón "Agregar Localización" no pasa nada, y debería mostrar el "Selector de Ubicacion" predeterminado. Cuando edito un despliegue de este tipo si aparece el "Selector de Ubicacion" correcto.
