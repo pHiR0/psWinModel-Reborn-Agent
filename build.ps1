@@ -7,28 +7,35 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-Write-Host "`n=== psWinModel Reborn Agent - Build Script ===" -ForegroundColor Cyan
-Write-Host "Compilando pswm.ps1 a pswm.exe...`n" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "┌─────────────────────────────────────────────────┐" -ForegroundColor Cyan
+Write-Host "│   psWinModel Reborn Agent — Build Script        │" -ForegroundColor Cyan
+Write-Host "└─────────────────────────────────────────────────┘" -ForegroundColor Cyan
+Write-Host ""
 
 # Verificar que ps2exe está instalado
+Write-Host "[1/4] Verificando dependencias..." -ForegroundColor Gray
 if (-not (Get-Module -ListAvailable -Name ps2exe)) {
-    Write-Host "ps2exe no está instalado. Instalando..." -ForegroundColor Yellow
+    Write-Host "      ps2exe no encontrado. Instalando desde PSGallery..." -ForegroundColor Yellow
     Install-Module -Name ps2exe -Scope CurrentUser -Force
-    Write-Host "ps2exe instalado correctamente" -ForegroundColor Green
+    Write-Host "      ps2exe instalado correctamente." -ForegroundColor Green
+} else {
+    Write-Host "      ps2exe OK." -ForegroundColor DarkGray
 }
 
 # Crear directorio build si no existe
 if (-not (Test-Path .\build)) {
     New-Item -ItemType Directory -Path .\build | Out-Null
-    Write-Host "Directorio .\build creado" -ForegroundColor Gray
+    Write-Host "      Directorio .\build creado." -ForegroundColor DarkGray
 }
 
 # Parámetros de compilación
+$buildVersion = ((Get-Date -Format 'yyyy.MM.dd.HHmm') + [math]::Floor((Get-Date).Second / 10).ToString())
 $params = @{
     inputFile = ".\agent-core\pswm.ps1"
     outputFile = ".\build\pswm.exe"
     title = "psWinModel Reborn Agent"
-    version = ((Get-Date -Format 'yyyy.MM.dd.HHmm') + [math]::Floor((Get-Date).Second / 10).ToString())
+    version = $buildVersion
     company = "psWinModel"
     product = "psWinModel Reborn Agent"
     copyright = ("(c) " + (Get-Date -Format 'yyyy'))
@@ -38,44 +45,42 @@ $params = @{
 }
 
 # Compilar
-Write-Host "Compilando con ps2exe..." -ForegroundColor Yellow
+Write-Host "[2/4] Compilando agent-core\pswm.ps1 → build\pswm.exe  (versión $buildVersion)..." -ForegroundColor Yellow
 Invoke-ps2exe @params
 
-if (Test-Path .\build\pswm.exe) {
-    $size = (Get-Item .\build\pswm.exe).Length / 1MB
-    Write-Host "`n✓ Compilación exitosa: .\build\pswm.exe" -ForegroundColor Green
-    Write-Host "  Tamaño: $([math]::Round($size, 2)) MB" -ForegroundColor Gray
-} else {
-    Write-Host "`n✗ Error: El archivo pswm.exe no fue generado" -ForegroundColor Red
+if (-not (Test-Path .\build\pswm.exe)) {
+    Write-Host ""
+    Write-Host "  ✗ Error: el archivo build\pswm.exe no fue generado." -ForegroundColor Red
     exit 1
 }
 
+Write-Host "      Compilación completada." -ForegroundColor DarkGray
+
 # Pruebas post-compilación
 if (-not $SkipTest) {
-    Write-Host "`n=== Ejecutando pruebas básicas ===" -ForegroundColor Cyan
-    
-    Write-Host "`n1. Probando 'pswm.exe version':" -ForegroundColor Yellow
+    Write-Host "[3/4] Verificando binario generado..." -ForegroundColor Gray
+    Write-Host ""
     & .\build\pswm.exe version
-    
-    Write-Host "`n2. Probando 'pswm.exe help':" -ForegroundColor Yellow
-    & .\build\pswm.exe help
-    
-    Write-Host "`n✓ Pruebas básicas completadas" -ForegroundColor Green
+    Write-Host ""
 }
 
-Write-Host "`n=== Build completado ===" -ForegroundColor Cyan
-Write-Host @"
+# Resumen final
+Write-Host "[4/4] Calculando hashes y generando resumen..." -ForegroundColor Gray
 
-Ejecutable generado: .\build\pswm.exe
+$exeItem  = Get-Item .\build\pswm.exe
+$exePath  = $exeItem.FullName
+$exeBytes = $exeItem.Length
+$exeMB    = [math]::Round($exeBytes / 1MB, 2)
+$sha256   = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToLower()
+$md5      = (Get-FileHash -LiteralPath $exePath -Algorithm MD5).Hash.ToLower()
 
-Comandos disponibles:
-  .\build\pswm.exe version          - Mostrar versión
-  .\build\pswm.exe help             - Mostrar ayuda
-  .\build\pswm.exe check_status     - Verificar estado
-  .\build\pswm.exe view_config      - Ver configuración
-  .\build\pswm.exe gencert          - Generar certificados
-  .\build\pswm.exe reg_init_check   - Registrar agente
-
-Para más información, consulta: .\docs\compilar_pswm.md
-
-"@ -ForegroundColor White
+Write-Host ""
+Write-Host "┌─────────────────────────────────────────────────┐" -ForegroundColor Green
+Write-Host "│   ✓ Build completado correctamente              │" -ForegroundColor Green
+Write-Host "└─────────────────────────────────────────────────┘" -ForegroundColor Green
+Write-Host ""
+Write-Host "  Ruta    : $exePath" -ForegroundColor White
+Write-Host "  Tamaño  : $exeMB MB  ($exeBytes bytes)" -ForegroundColor White
+Write-Host "  SHA256  : $sha256" -ForegroundColor DarkGray
+Write-Host "  MD5     : $md5" -ForegroundColor DarkGray
+Write-Host ""
