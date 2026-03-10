@@ -8,9 +8,9 @@ param(
 $ErrorActionPreference = 'Stop'
 
 Write-Host ""
-Write-Host "┌─────────────────────────────────────────────────┐" -ForegroundColor Cyan
-Write-Host "│   psWinModel Reborn Agent — Build Script        │" -ForegroundColor Cyan
-Write-Host "└─────────────────────────────────────────────────┘" -ForegroundColor Cyan
+Write-Host "+---------------------------------------------------+" -ForegroundColor Cyan
+Write-Host "|   psWinModel Reborn Agent - Build Script          |" -ForegroundColor Cyan
+Write-Host "+---------------------------------------------------+" -ForegroundColor Cyan
 Write-Host ""
 
 # Verificar que ps2exe está instalado
@@ -45,16 +45,16 @@ $params = @{
 }
 
 # Compilar
-Write-Host "[2/4] Compilando agent-core\pswm.ps1 → build\pswm.exe  (versión $buildVersion)..." -ForegroundColor Yellow
+Write-Host "[2/4] Compilando agent-core\pswm.ps1 -> build\pswm.exe  (version $buildVersion)..." -ForegroundColor Yellow
 Invoke-ps2exe @params
 
 if (-not (Test-Path .\build\pswm.exe)) {
     Write-Host ""
-    Write-Host "  ✗ Error: el archivo build\pswm.exe no fue generado." -ForegroundColor Red
+    Write-Host "  [ERROR] El archivo build\pswm.exe no fue generado." -ForegroundColor Red
     exit 1
 }
 
-Write-Host "      Compilación completada." -ForegroundColor DarkGray
+Write-Host "      Compilacion completada." -ForegroundColor DarkGray
 
 # Pruebas post-compilación
 if (-not $SkipTest) {
@@ -75,12 +75,12 @@ $sha256   = (Get-FileHash -LiteralPath $exePath -Algorithm SHA256).Hash.ToLower(
 $md5      = (Get-FileHash -LiteralPath $exePath -Algorithm MD5).Hash.ToLower()
 
 Write-Host ""
-Write-Host "┌─────────────────────────────────────────────────┐" -ForegroundColor Green
-Write-Host "│   ✓ Build completado correctamente              │" -ForegroundColor Green
-Write-Host "└─────────────────────────────────────────────────┘" -ForegroundColor Green
+Write-Host "+---------------------------------------------------+" -ForegroundColor Green
+Write-Host "|   [OK] Build completado correctamente             |" -ForegroundColor Green
+Write-Host "+---------------------------------------------------+" -ForegroundColor Green
 Write-Host ""
 Write-Host "  Ruta    : $exePath" -ForegroundColor White
-Write-Host "  Tamaño  : $exeMB MB  ($exeBytes bytes)" -ForegroundColor White
+Write-Host "  Tamano  : $exeMB MB  ($exeBytes bytes)" -ForegroundColor White
 Write-Host "  SHA256  : $sha256" -ForegroundColor DarkGray
 Write-Host "  MD5     : $md5" -ForegroundColor DarkGray
 Write-Host ""
