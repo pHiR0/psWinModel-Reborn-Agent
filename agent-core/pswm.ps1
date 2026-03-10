@@ -64,7 +64,17 @@ try {
   if ($__exePath -like '*.exe' -and $__exePath -notlike '*powershell*' -and $__exePath -notlike '*pwsh*') {
     $__fi = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($__exePath)
     $__v = if ($__fi.FileVersion) { $__fi.FileVersion } elseif ($__fi.ProductVersion) { $__fi.ProductVersion } else { $null }
-    if ($__v) { $script:Version = $__v.Trim() }
+    if ($__v) {
+      $__v = $__v.Trim()
+      # ps2exe almacena la versión como System.Version (numérico), lo que elimina ceros iniciales.
+      # El 4º segmento corresponde a HHmmS (5 dígitos); restauramos el cero inicial si es necesario.
+      $__vParts = $__v -split '\.'
+      if ($__vParts.Length -eq 4 -and $__vParts[0] -match '^\d{4}$' -and $__vParts[3] -match '^\d+$') {
+        $__vParts[3] = $__vParts[3].PadLeft(5, '0')
+        $__v = $__vParts -join '.'
+      }
+      $script:Version = $__v
+    }
   }
 } catch { }
 $script:ConfigPath = Join-Path $OutDir "config.json"
@@ -1272,7 +1282,15 @@ function Collect-Facts {
       $ver = if ($fvi -and $fvi.FileVersion -and $fvi.FileVersion.Trim()) { $fvi.FileVersion.Trim() }`
               elseif ($fvi -and $fvi.ProductVersion -and $fvi.ProductVersion.Trim()) { $fvi.ProductVersion.Trim() }`
               else { $null }
-      if ($ver) { $agentVer = $ver }
+      if ($ver) {
+        # Normalizar: ps2exe elimina ceros iniciales del 4º segmento (HHmmS, 5 dígitos).
+        $__vp = $ver -split '\.'
+        if ($__vp.Length -eq 4 -and $__vp[0] -match '^\d{4}$' -and $__vp[3] -match '^\d+$') {
+          $__vp[3] = $__vp[3].PadLeft(5, '0')
+          $ver = $__vp -join '.'
+        }
+        $agentVer = $ver
+      }
     } catch { }
   }
   $facts += @{ fact_key = 'agent_version'; value = $agentVer; source = 'agent' }
