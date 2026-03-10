@@ -247,4 +247,4 @@ Could not migrate old update settings: oldVersion is not defined
 > Para todo esto si no lo tienes claro como sería mejor puedes consultarme.
 - Quiero que se guarde un registro de todas las veces que se ha descargado el pswm.exe con el enlacde de descarga pública, registrando fecha y hora ip remota, y la version pswm.exe
 > Pondo dentro de "Versiones de Agente" pero en una pestaña nueva, limita el regitro a los ultimos 200 mas recientes, el resto eliminalos de la BDD.
-
+- A las organizaciones vamos a ponerle una opción para poder subirle un logotipo.
