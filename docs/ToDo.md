@@ -215,11 +215,17 @@ Could not migrate old update settings: oldVersion is not defined
     at next (C:\MyRepos\psWinModel-Reborn-Server\node_modules\express\lib\router\route.js:149:13)
     at authMiddleware (C:\MyRepos\psWinModel-Reborn-Server\src\middleware\auth.js:62:5)
 
-- De selectores_test :
++ De selectores_test :
 > El "Selector de Grupo" predeterminado será la variante E
 > El "Selector de Agente" predeterminado será la variante B , pero recuerda que en la columna Ubicación tenemos que usar el "badge de ubicacion predeterminado" que elegimos anteriormente.
 > El "Selector de Orgnizacion" predeterminado será la variante E
 > Busca en todo el proyecto donde se usa Selectores de "Grupo","Agentes" y/o "Organizaciones" y cambialos por los predeterminados que acabamos de definir
 > Documenta los "Selectores" prederminados que hemos seleccionado para cada cosa.
-- Documenta tambien si no lo esta, cual es el "badge de ubicacion predeterminado" elegido anteriormante y el "Selector de Ubicaciones" si no no lo están ya.
-- Elimina el acceso a /selectores_test una vez esté todo implementado y documentado.
++ Documenta tambien si no lo esta, cual es el "badge de ubicacion predeterminado" elegido anteriormante y el "Selector de Ubicaciones" si no no lo están ya.
++ Elimina el acceso a /selectores_test una vez esté todo implementado y documentado.
+
+- Te falto usar los nuevos selectores de "Grupo", "Organzaciones" , "Agentes" en :
+> Los despliegues de Powershell de cada tipo, tanto en el formulario de Creacion como el de edicion.
+> Los despliegues de Choco de cada tipo, tanto en el formulario de Creacion como el de edicion.
+> En el botón Acciones de "Gestion de Agentes" -> "Asignar Grupo"
+- En la edicion de angente "Editar Agente", tiene una seccion para seleccionar los grupos a los que pertenece, y es una lista con todos los grupos y un checkbox para cada uno, esto no es muy comodo de usar cuando haya muchos grupos. Quiero que uses Badges con los grupos a los que está asignado el agente, y cada badge puede ser elimnado con el boton X que tendrá cada uno, luego en la misma zona un botón o badge de accion que diga seleccionar grupo o agregar a grupo, y usamos el "Selector de Grupos" predeterminado para añadirlo a esos grupos.
