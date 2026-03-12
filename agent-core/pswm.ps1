@@ -34,6 +34,7 @@ param(
   [switch]$RemoveFiles,
   [switch]$LogExtendedInfo,
   [switch]$Install,
+  [switch]$ShowChocoWindow,
   [Parameter(ValueFromRemainingArguments=$true)]
   [string[]]$ExtraArgs = @()
 )
@@ -103,6 +104,10 @@ $script:RemoveFiles = $RemoveFiles.IsPresent `
 $script:InstallOnRegister = $Install.IsPresent `
   -or ($ExtraArgs -contains '--install') `
   -or ($_rawCmdLine -match '(?:^|\s)--install(?:\s|$)')
+# --show-choco-window: mostrar ventana de choco.exe en foreground (debug interactivo)
+$script:ShowChocoWindow = $ShowChocoWindow.IsPresent `
+  -or ($ExtraArgs -contains '--show-choco-window') `
+  -or ($_rawCmdLine -match '--show-choco-window')
 #endregion
 
 #region Exit Helper
@@ -1579,7 +1584,8 @@ function Get-ResolvedChocoConfig([string]$serverUrl, [int]$agentId) {
 }
 
 function Get-ChocoExePath {
-  $exe = (Get-Command choco -ErrorAction SilentlyContinue).Source
+  $chocoCmd = Get-Command choco -ErrorAction SilentlyContinue
+  $exe = if ($chocoCmd) { $chocoCmd.Source } else { $null }
   if (-not $exe) { $exe = "$env:ProgramData\chocolatey\bin\choco.exe" }
   if (Test-Path $exe) { return $exe }
   return $null
@@ -1888,6 +1894,7 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
 
   # ── Fase 5: Desinstalar paquetes marcados como uninstall ──
   $uninstallPkgs = @($packages | Where-Object { $_.action -eq 'uninstall' })
+  $adoptPkgs     = @($packages | Where-Object { $_.action -eq 'adopt' })
   if ($uninstallPkgs.Count -gt 0) {
     Write-Info "  Fase 5: Desinstalando $($uninstallPkgs.Count) paquete(s)..."
     foreach ($pkg in $uninstallPkgs) {
@@ -1936,11 +1943,39 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
     }
   }
 
+  # ── Fase 6b: Forzar versión deseada en paquetes 'adopt' ya instalados ──
+  if ($adoptPkgs.Count -gt 0) {
+    Write-Info "  Fase 6b: Adoptando $($adoptPkgs.Count) paquete(s) (sólo si ya instalados)..."
+    foreach ($pkg in $adoptPkgs) {
+      $pkgNameLower = $pkg.package_name.ToLower()
+      if (-not $installedPkgs.ContainsKey($pkgNameLower)) {
+        Write-Info "    $($pkg.package_name) no está instalado, adoptarlo ignorado"
+        continue
+      }
+      $installedVer = $installedPkgs[$pkgNameLower]
+      $desiredVer   = if ($pkg.version -and $pkg.version -ne 'latest') { $pkg.version } else { $null }
+      if ($desiredVer -and $installedVer -ne $desiredVer) {
+        Write-Info "    Adoptando $($pkg.package_name): instalada v$installedVer → deseada v$desiredVer"
+        $startedAt   = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+        $installArgs = "install $($pkg.package_name) -y --version=$desiredVer"
+        if ($pkg.params) { $installArgs += " $($pkg.params)" }
+        $exitCodeVal = Run-ChocoCmd -chocoExe $chocoExe -cmdArgs $installArgs `
+          -serverUrl $serverUrl -agentId $agentId -packageName $pkg.package_name -action 'adopt' `
+          -startedAt $startedAt -iterationId $iterationId
+        if ($exitCodeVal -ne 0) { $hadErrors = $true }
+      } else {
+        Write-Info "    $($pkg.package_name) adoptado sin cambio de versión (v$installedVer)"
+      }
+    }
+  }
+
   # ── Fase 7: Ajustar pins en paquetes ya instalados ──
   Write-Info "  Fase 7: Ajustando pins..."
   # Refrescar lista de pins
   $pinnedPkgs = Get-ChocoPinnedPackages -chocoExe $chocoExe
-  foreach ($pkg in $installPkgs) {
+  # Incluye tanto install como adopt (ambos aplican pin si el paquete está instalado)
+  $managedInstallOrAdopt = @($installPkgs) + @($adoptPkgs)
+  foreach ($pkg in $managedInstallOrAdopt) {
     $pkgNameLower = $pkg.package_name.ToLower()
     if (-not $installedPkgs.ContainsKey($pkgNameLower)) { continue }
     $isPinned = $pinnedPkgs.ContainsKey($pkgNameLower)
@@ -1993,9 +2028,9 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
           continue
         }
         if ($profile.update_mode -eq 'managed-only') {
-          # Solo actualizar si está en la lista de paquetes gestionados
+          # Solo actualizar si está en la lista de paquetes gestionados (install o adopt)
           $isManaged = $false
-          foreach ($mp in $installPkgs) {
+          foreach ($mp in $managedInstallOrAdopt) {
             if ($mp.package_name.ToLower() -eq $pkgName) { $isManaged = $true; break }
           }
           if (-not $isManaged) {
@@ -2056,16 +2091,27 @@ function Run-ChocoCmd(
     $psi = New-Object System.Diagnostics.ProcessStartInfo
     $psi.FileName  = $chocoExe
     $psi.Arguments = $cmdArgs
-    $psi.UseShellExecute = $false
-    $psi.CreateNoWindow  = $true
-    $psi.RedirectStandardOutput = $true
-    $psi.RedirectStandardError  = $true
-
-    $proc = [System.Diagnostics.Process]::Start($psi)
-    $stdoutVal = $proc.StandardOutput.ReadToEnd()
-    $stderrVal = $proc.StandardError.ReadToEnd()
-    [void]$proc.WaitForExit(600000) # timeout 10min
-    $exitCodeVal = $proc.ExitCode
+    if ($script:ShowChocoWindow) {
+      # Modo ventana visible para depuración interactiva
+      $psi.UseShellExecute       = $true
+      $psi.CreateNoWindow        = $false
+      $psi.RedirectStandardOutput = $false
+      $psi.RedirectStandardError  = $false
+      $proc = [System.Diagnostics.Process]::Start($psi)
+      [void]$proc.WaitForExit(600000)
+      $exitCodeVal = $proc.ExitCode
+      $stdoutVal = '(salida no capturada en modo --show-choco-window)'
+    } else {
+      $psi.UseShellExecute = $false
+      $psi.CreateNoWindow  = $true
+      $psi.RedirectStandardOutput = $true
+      $psi.RedirectStandardError  = $true
+      $proc = [System.Diagnostics.Process]::Start($psi)
+      $stdoutVal = $proc.StandardOutput.ReadToEnd()
+      $stderrVal = $proc.StandardError.ReadToEnd()
+      [void]$proc.WaitForExit(600000) # timeout 10min
+      $exitCodeVal = $proc.ExitCode
+    }
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     $errorMsg = "$_"
@@ -2183,7 +2229,7 @@ function Get-AgentVersion {
   return $script:Version
 }
 
-function Invoke-CheckAndApplyUpdate([string]$serverUrl) {
+function Invoke-CheckAndApplyUpdate([string]$serverUrl, [int]$agentId = 0, [string]$iterationId = '') {
   <#
   .SYNOPSIS
     Comprueba si hay una actualizacion disponible en el servidor y la aplica.
@@ -2201,8 +2247,9 @@ function Invoke-CheckAndApplyUpdate([string]$serverUrl) {
   $currentVersion = Get-AgentVersion
   Write-Info "Version actual: $currentVersion"
 
-  # Consultar al servidor
-  $uri = "$serverUrl/api/updates/check?current_version=$([System.Uri]::EscapeDataString($currentVersion))"
+  # Consultar al servidor (incluye agent_id para soportar canal beta)
+  $agentIdParam = if ($agentId -and $agentId -gt 0) { "&agent_id=$agentId" } else { "" }
+  $uri = "$serverUrl/api/updates/check?current_version=$([System.Uri]::EscapeDataString($currentVersion))$agentIdParam"
   try {
     $checkRes = Invoke-RestMethod -Uri $uri -Method Get -ErrorAction Stop
   } catch {
@@ -2274,6 +2321,11 @@ function Invoke-CheckAndApplyUpdate([string]$serverUrl) {
     }
     Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
     return
+  }
+
+  # Registrar la actualización en la iteración (si hay contexto de iteración)
+  if ($agentId -gt 0 -and $iterationId -ne '') {
+    Send-UpdateRun -serverUrl $serverUrl -agentId $agentId -iterationId $iterationId -fromVersion $currentVersion -toVersion $serverVersion
   }
 
   # Lanzar updater como proceso independiente:
@@ -2463,6 +2515,75 @@ function Sync-UpdaterBinary {
 
 #endregion
 
+function Start-AgentIteration([string]$serverUrl, [int]$agentId, [string]$iterationId) {
+  <# Notifica al servidor el inicio de una iteración #>
+  try {
+    $body = ConvertTo-Json -Compress @{
+      iteration_id = $iterationId
+      started_at   = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ss')
+    }
+    Invoke-RestMethod -Uri "$serverUrl/api/agents/$agentId/iterations" -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "  [ITER] Error registrando inicio de iteración: $_ (no fatal)"
+  }
+}
+
+function Finish-AgentIteration([string]$serverUrl, [int]$agentId, [string]$iterationId, [bool]$hadErrors) {
+  <# Notifica al servidor el fin de una iteración con estado y timestamp #>
+  try {
+    $statusVal = if ($hadErrors) { 'failed' } else { 'completed' }
+    $body = ConvertTo-Json -Compress @{
+      status      = $statusVal
+      finished_at = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ss')
+      had_errors  = if ($hadErrors) { 1 } else { 0 }
+    }
+    Invoke-RestMethod -Uri "$serverUrl/api/agents/$agentId/iterations/$iterationId" -Method Patch -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "  [ITER] Error registrando fin de iteración: $_ (no fatal)"
+  }
+}
+
+function Send-ChocoInstallRun([string]$serverUrl, [int]$agentId, [string]$iterationId, [string]$startedAt, [int]$exitCode, [string]$stdout) {
+  <# Registra en script_runs la instalación de Chocolatey con run_type='choco_install' #>
+  try {
+    $body = ConvertTo-Json -Compress @{
+      agent_id     = $agentId
+      run_type     = 'choco_install'
+      started_at   = $startedAt
+      finished_at  = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ss')
+      exit_code    = $exitCode
+      stdout       = if ($stdout.Length -gt 10000) { $stdout.Substring(0, 10000) + "`n...[truncado]" } else { $stdout }
+      iteration_id = $iterationId
+    }
+    Invoke-RestMethod -Uri "$serverUrl/api/deployments/runs" -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "  [CHOCO-INSTALL] Error registrando instalación en iteración: $_ (no fatal)"
+  }
+}
+
+function Send-UpdateRun([string]$serverUrl, [int]$agentId, [string]$iterationId, [string]$fromVersion, [string]$toVersion) {
+  <# Registra en script_runs la actualización del agente con run_type='agent_update' #>
+  try {
+    $startedAt = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ss')
+    $body = ConvertTo-Json -Compress @{
+      agent_id     = $agentId
+      run_type     = 'agent_update'
+      started_at   = $startedAt
+      finished_at  = $startedAt
+      exit_code    = 0
+      stdout       = "Actualización de agente iniciada: v$fromVersion → v$toVersion"
+      iteration_id = $iterationId
+    }
+    Invoke-RestMethod -Uri "$serverUrl/api/deployments/runs" -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "  [UPDATE] Error registrando actualización en iteración: $_ (no fatal)"
+  }
+}
+
 function Invoke-Iterate {
   <#
   .SYNOPSIS
@@ -2472,6 +2593,7 @@ function Invoke-Iterate {
 
   # Generar iteration_id unico basado en ticks de fecha/hora actual
   $script:IterationId = [string](Get-Date).Ticks
+  $script:IterationStartTime = Get-Date
   Write-Info "Iteration ID: $($script:IterationId)"
 
   # Flag para rastrear si la iteracion tuvo errores
@@ -2550,6 +2672,9 @@ function Invoke-Iterate {
     Write-Err "Servidor no accesible: $srvUrl"
     Exit-Cmd 2
   }
+
+  # Notificar al servidor el inicio de la iteracion
+  Start-AgentIteration -serverUrl $srvUrl -agentId $agentId -iterationId $script:IterationId
 
   # ---- PASO 1: Facts ----
   Write-Info "Paso 1/4: Recopilando y enviando facts..."
@@ -2650,7 +2775,8 @@ function Invoke-Iterate {
   try {
     if (-not (Get-ChocoExePath)) {
       Write-Info "Chocolatey no encontrado. Intentando instalar desde configuración del servidor..."
-      $chocoScriptUri = "$srvUrl/api/settings/choco-install-script"
+      $chocoInstallStartedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
+      $chocoScriptUri = "$srvUrl/api/settings/choco-install-script?agent_id=$agentId"
       $scriptRes = Invoke-RestMethod -Uri $chocoScriptUri -Method Get -ErrorAction Stop
       if ($scriptRes.script -and $scriptRes.script.Trim()) {
         $tmpScript = [System.IO.Path]::GetTempFileName() + '.ps1'
@@ -2666,14 +2792,24 @@ function Invoke-Iterate {
         $chocoOut = $procChoco.StandardOutput.ReadToEnd()
         $chocoErr = $procChoco.StandardError.ReadToEnd()
         [void]$procChoco.WaitForExit(120000)
-        Write-Info "  Instalación Chocolatey exit code: $($procChoco.ExitCode)"
+        $chocoInstallExitCode = $procChoco.ExitCode
+        Write-Info "  Instalación Chocolatey exit code: $chocoInstallExitCode"
         if ($chocoOut) { Write-Info "  STDOUT: $($chocoOut.Substring(0, [Math]::Min($chocoOut.Length, 500)))" }
         if ($chocoErr) { Write-Info "  STDERR: $($chocoErr.Substring(0, [Math]::Min($chocoErr.Length, 200)))" }
         # Refrescar PATH para que choco.exe sea encontrado sin reiniciar sesión
         $env:PATH = [System.Environment]::GetEnvironmentVariable('PATH','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('PATH','User')
         try { Remove-Item $tmpScript -Force -ErrorAction SilentlyContinue } catch {}
-        if (Get-ChocoExePath) { Write-Success "  Chocolatey instalado correctamente." }
-        else { Write-Info "  No se pudo verificar la instalación de Chocolatey tras ejecutar el script." }
+        $chocoInstalled = Get-ChocoExePath
+        if ($chocoInstalled) { Write-Success "  Chocolatey instalado correctamente." }
+        else {
+          Write-Info "  No se pudo verificar la instalación de Chocolatey tras ejecutar el script."
+          $script:IterationHadErrors = $true
+        }
+        # Registrar la instalación en la iteración con icono distinto
+        $chocoInstallOutput = "📦 Instalación de Chocolatey`n$('=' * 60)`nCMD: powershell.exe $($psiChoco.Arguments)`n$chocoOut"
+        if ($chocoErr) { $chocoInstallOutput += "`nSTDERR:`n$chocoErr" }
+        Send-ChocoInstallRun -serverUrl $srvUrl -agentId $agentId -iterationId $script:IterationId `
+          -startedAt $chocoInstallStartedAt -exitCode $chocoInstallExitCode -stdout $chocoInstallOutput
       } else {
         Write-Info "  No hay script de instalación de Chocolatey configurado en el servidor."
       }
@@ -2719,7 +2855,7 @@ function Invoke-Iterate {
   # ---- PASO 5: Check update ----
   Write-Info "Paso 5/5: Comprobando actualizaciones..."
   try {
-    Invoke-CheckAndApplyUpdate -serverUrl $srvUrl
+    Invoke-CheckAndApplyUpdate -serverUrl $srvUrl -agentId $agentId -iterationId $script:IterationId
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Info "Error comprobando actualizaciones: $_ (continuando)"
@@ -2763,7 +2899,17 @@ function Invoke-Iterate {
     Write-Info "Error en facts post-iteracion: $_ (continuando)"
   }
 
-  Write-Success "=== Iteracion completada ==="
+  # Calcular duracion
+  $duration = (Get-Date) - $script:IterationStartTime
+  $durStr = ''
+  if ($duration.Hours -gt 0) { $durStr += "$($duration.Hours)h " }
+  if ($duration.Minutes -gt 0 -or $duration.Hours -gt 0) { $durStr += "$($duration.Minutes)m " }
+  $durStr += "$($duration.Seconds)seg"
+
+  # Notificar fin de iteracion al servidor
+  Finish-AgentIteration -serverUrl $srvUrl -agentId $agentId -iterationId $script:IterationId -hadErrors $script:IterationHadErrors
+
+  Write-Success "=== Iteracion completada en $durStr ==="
   Exit-Cmd 0
 }
 
@@ -3235,6 +3381,12 @@ Comandos disponibles:
                         - disabled: no se proporcionan actualizaciones
                         - upgrade: solo actualiza si la version del servidor es mayor
                         - mandatory: fuerza la version publicada (permite downgrade)
+                      Opciones especificas de iterate:
+                        --show-choco-window     Muestra las ventanas de choco.exe en primer plano (foreground).
+                                                Util para depuracion interactiva o ver que ocurre si choco se
+                                                queda colgado. En este modo NO se captura stdout/stderr de choco.
+                        --log-extended-info     Registra en el log cada invocacion de powershell.exe y choco.exe
+                                                con su linea de comando completa y parametros.
   reset_timers_lock   Elimina la cache de 'choco outdated -r' y el lock local de actualizacion.
                       Fuerza que en la proxima iteracion se re-ejecute la consulta de
                       actualizaciones y el proceso de upgrade de paquetes Chocolatey.
@@ -3265,6 +3417,9 @@ Ejemplos:
   pswm.exe uninstall_service --remove-files
   pswm.exe gencert -KeySize 4096
   pswm.exe iterate
+  pswm.exe iterate --show-choco-window
+  pswm.exe iterate --log-extended-info
+  pswm.exe iterate --show-choco-window --log-extended-info
   pswm.exe dummy_iterate
   pswm.exe gui
   pswm.exe version

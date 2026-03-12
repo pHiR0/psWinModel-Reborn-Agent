@@ -239,14 +239,67 @@ Could not migrate old update settings: oldVersion is not defined
 + En los popups del "Selector de Grupo" , aparece un texto indicando que Variante es, esto ya no aplica era solo para el momento de test, elimina ese texto en todos lo sitios que se use.
 + Cuando estamos crando un nuevo despliegue de powershell, y selecciono "Localizaciones" , cuando le doy al botón "Agregar Localización" no pasa nada, y debería mostrar el "Selector de Ubicacion" predeterminado. Cuando edito un despliegue de este tipo si aparece el "Selector de Ubicacion" correcto.
 
-- El pswm.ps1 tiene hardcodeado en la funcion Get-ServerUrl la url por defecto http://localhost:3000 , bien, quiero que si en el mismo directorio de build.ps1 existe un .json que tenga esa opcion con una url, compile pswm con la url del .json hardcodeada en pswm.exe
-- En la gestion de usuarios me gustaría ver que sesiones "abiertas" tiene cada usuario, con IP de orgigen de cada sesion y poder cerrarlas todas o granularmente.
-- Si un paquete de choco entra en conflicto por estar en un "Despliegue de choco" de tipo Agentes, y un despliegue de choco de tipo "Grupo", tendrá preferencia el tipo grupo.
-- Si aún así hay un paquete que para un agente entra en conflicto porque está en dos "Despliegues de Choco" tipo Grupo, vamos a implementar el OrderId para el despliegue de este tipo, que será numérico, y desde 0 hacia arriba, hasta el máximo que admita un tipo integer. A la hora de desempatar, el que tenga el numero menor será el elegido. Si aún así hay un empate, pues se elige el primero que se creó.
-- En los despliegue de chocolatey, en los paquetes quiero agregar una nueva accion, que no se como llamarla, pero básicamente es que en paquete que hayan sido instalados , bien manualmente por el usuario, o por cualquier otro metodo, entonces pasa a ser gestionado, ajustando la version especifica si la tiene, usando los parametros indicados para actualziar si lo tiene, fijarlo si está establecido, y entrar en las politicas de Actualizaciones del perfil.
-- Quiero que se guarde un registro de todas las veces que se ha descargado el pswm.exe con el enlacde de descarga pública, registrando fecha y hora ip remota, y la version pswm.exe
++ El pswm.ps1 tiene hardcodeado en la funcion Get-ServerUrl la url por defecto http://localhost:3000 , bien, quiero que si en el mismo directorio de build.ps1 existe un .json que tenga esa opcion con una url, compile pswm con la url del .json hardcodeada en pswm.exe
++ En la gestion de usuarios me gustaría ver que sesiones "abiertas" tiene cada usuario, con IP de orgigen de cada sesion y poder cerrarlas todas o granularmente.
++ En los despliegue de chocolatey, en los paquetes quiero agregar una nueva accion, que no se como llamarla, pero básicamente es que en paquete que hayan sido instalados , bien manualmente por el usuario, o por cualquier otro metodo, entonces pasa a ser gestionado, ajustando la version especifica si la tiene, usando los parametros indicados para actualziar si lo tiene, fijarlo si está establecido, y entrar en las politicas de Actualizaciones del perfil.
++ Quiero que se guarde un registro de todas las veces que se ha descargado el pswm.exe con el enlacde de descarga pública, registrando fecha y hora ip remota, y la version pswm.exe
 > Ponlo dentro de "Versiones de Agente" pero en una pestaña nueva, limita el regitro a los ultimos 200 mas recientes, el resto eliminalos de la BDD.
-- A las organizaciones vamos a ponerle una opción para poder subirle un logotipo.
-- En la "Gestión de Agentes" en la pestaña Packages de un agente, en la parte de "Paquetes Chocolate" Gestionados, hay que agregar tambien la columna "Actualización disponible" igual que en los "No gestionados"
-- En /agent de la web-console quiero que muestre la version correcta, te pongo la peticion que implementamos anteriormente par que sepas lo que hablo:
++ A las organizaciones vamos a ponerle una opción para poder subirle un logotipo.
++ En la "Gestión de Agentes" en la pestaña Packages de un agente, en la parte de "Paquetes Chocolate" Gestionados, hay que agregar tambien la columna "Actualización disponible" igual que en los "No gestionados"
++ En /agent de la web-console quiero que muestre la version correcta, te pongo la peticion que implementamos anteriormente par que sepas lo que hablo:
 > "En las versiones de agente, cuando lo subo , no me preserva los 0 iniciales de cada segmento, por ejemplo la version 2026.03.10.02244 aparece como 2026.3.10.2244 y al menos en el ultimo segmento de la version, si tiene un cero delante me gustaría que apareciera, y ya que en los otros vamos a eliminar los ceros iniciales en la web tambien lo hacemos en local."
+
++ En /agent de la web-console muestras debanjo el texto "También puedes descargar directamente desde:
+https://pswm-server.phiro.es/agent/pswm.exe" , pues quiero que junto a la casilla de la url ponga un icono tipico para copiar la url al portapapeles
+
++ Los logos de fondo de las organizaciones los pones de fondo centrados en la card, rellenando todo lo vertical, y respentando la proporcion , sin deformarlo, y como marca de agua apenas se ve, ponlo si con transparencia, pero qu se vea ahora está muy translucido.
++ Quiero pasarle un parametro a pswm iterate para que si este parametro está, muestre en foreground las ventanas de los procesos de choco.exe , así podemos ir viendo que sucede y si se atasca de alguna forma
++ Cuando en una iteracion se necesita instalar el propio chocolatey, tambien hay que registralo en la iteración , usemos un icono diferentes al de los "Paquetes de choco", los "Scripts Actions", y los "Scripts Facts"
++ Me gustaría que las iteraciones muestren un icono mientras están iterando, y otro cuando ya han iterado (esto directametne arriba junto con el iteration ID)
+> Tambien una vez finalizado registrar el tiempo que duró en formato ( #h #m #seg)
+> Si empieza una iteración y supuestamente hay otra anterior que ha terminado, marcamos esa anterior con icono que represente que la iteracion fue abortada o terminada abruptamente.
++ Lo que implementamos de las sesiones activas de los usuarios y que puedan cerrarlas selectivamente, quiero que también cada usuario tenga las suyas propias disponible en "Mi Perfil"
+
++ En el "pswm help" documenta el parametro '--show-choco-window'
+
++ Si es posible y no muy complicado, cuando se autoactualice el agente pswm.exe, quiero que apareza en la iteracion en la ficha del Agente.
++ En la documentacion en un archivo .md genera el un bloque de código de powershell para instalar de forma desatendida pswm.exe con token
+> Debe contener 3 variables una para el token , otra con la url de la descarga del pswm.exe y otra con la url del pswm-server.
+> Usa la misma estrategia que usa chocolatey para instalar su software invocando a Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+> La idea es que descargue el pswm.exe y lo instale u lo vincule usando token.
++ Con lo que sabemos del punto anterior, al generar el token de registro debe mostrar el bloque de código para instalar pswm.exe usando el token generado.
+> Tambien aparecerá cuando pulsamos sobre el icono de info junto a los tokens.
++ En los tokens cambia el icono de copiar token que está actualmente por el otro mas característico que somo dos cuadrados/rectángulos sobrepuestos. Y que cuando lo pulse apareza algun texto parecido a los toast notifications de android para saber que se ha copiado.
++ En la vista de Packages en los detalles de un Agente, en la seccion de Paquetes Chocolate Gestionados, los que son de tipo "adopt" aparecen con "✅" aunque no están instalados, si no estan instalados ponles otro icono para diferenciarlo, pero que no sea ⌛ ni ⏳, y además esos que no están instalados quiero que aparezan a la punta abajo del listado de los gestionados,  justo antes de los uninstall, cuando se vayan instalando iran moviendose arriba junto con los que están install.
++ En esa Vista de Packages Tenemos el "PERFIL CHOCOLATATEY ACTIVO" y "DESPLIEGUES CHOCOLATEY ACTIVOS" y debajo de cada uno los badges que representa a cada uno de los que aplica al agente, pues cuando hagamos click en el agente quiero que se abra la vista de "Depliegues" de powershell o "Despliegues Choco" con el campo de búsqueda del cuadro de texto de , rellenado con el id:<id del despliege>.
+> Que lo abra en una pestaña nueva
+> Para que esto funcione debes hacer cambios en el buscado para que si hacemos una búsqueda que empiece por id: muestre unicamente el despliegue que coresponda
+> Tambien haz que se abra si pulsamos en el badge de despliegue que está dentro del popup que aparece al pulsar sobre el icono de info de cada paquete gestionado.
++ En todos los contenedores que mostramos codigo de salida de los comandos quiero que tengan arriba a la derecha un icono para abrirlo en forma de popup mas ampliado para poder ver mas cantidad de texto
+> Recuerda que este popup debe tener el botón cerrar, pero tambien quiero que tenga el boton descargar para descargar el contenido como un .txt
+> Tambien ponle el botón copiar contenido para copiarlo al portapapeles.
+> Recuerda hacerlo tanto en las Iteraciones, como en los "Eventos Chocolatey Recientes"
++ En la vista "Paquetes de Chocolatey" cambia el boton recargar que es estilo texto, por uno con un icono que represente esa accion.
+> Haz lo mismo con el botón "Ver salida/ocultar" que está en "Eventos Chocolatey recientes"
++ Reordena la configuración usando pestañas para cada seccion, agrupalos como quieras.
++ Para las "Versiones de Agente" ahora quiero añadir un canal de Beta:
+> Para ello debemos añadir un setting para elegir que grupo contiene los agentes acogidos al canal beta.
+> Luego hay que añadir toda la lógica para que los agentes en ese grupo reciban las actualiazaciones del canal beta
+> Las versiones almacenadas serán comunes tanto a la version beta, como la version estable.
+> El modo de publicación para cada canal es independeinte, es decir en cada uno se podrá configurar de formas diferentes.
+> Genera toda la lógica, server-side, para esto no es necesario, hacer cambios en el pswm
+
+
++ En la pestaña "Pacakages" de los detalles un Agente, bajo "PERFIL CHOCOLATEY ACTIVO" se muestra el badge con el perfil que aplica al agente, pero habíamos dicho que al hacer click en el badge, debía abrir una nueva ventana con "Perfiles de Chocolatey"  mostrando unicamente en el listado el perfil de chocolatey clickado.
+> En la misma linea, con los "Despliegues de Choco" se abre la web, con el buscador rellenado con id:<id del despliege> pero no muestra ningun despliegue . Asegurate que se mestra el despliege seleccionado y tambien en el anterior el Perfil de Chocolatey seleccionado
+> En la misma pestaña pars los paquetes de accion "adopt" que no están instalados has usado el emoji ⭕ y no me gusta , usa este 👻
++ He visto que el hace la descarga del agente esde la url de la api http://<servidor>:3000/api/updates/download y yo me refería que lo hiciera desde la url del enlace público http://<servidor>:3000/agent/pswm.exe del server
++ La pestaña nueva que agregamos a "Configuracion  del Servidor" llamada "Actualizaciones" quiero que la muevas dentro de "Versiones de Agente" y la llames "Beta" y dentro de la seccion muestra la version seleccionada, si no hay version seleccionado pues algo que diga que no está seleccionada.
+> Adicionalmente, dentro de esa seccion se puede seleccionar un Grupo, y quier hacerlo mediante el selector de grupos predeterminado tipo popup que está documentado, y luego el grupo seleccionado se muestra como un badge igual que seleccionamos grupos dentro de la ficha de edicion de un "Agente", con la salvedad que aqui unicamente se puede seleccinar un grupo.
+> Tambien el modo de actualización beta quiero que uses 3 botones igual que en modo de publicacion de "Versiones" dentro de Versiones de Agente.
++ En la ficha de Edicion de un Agtente en Ubicación no estas mostrando el badge predeterminado de ubicacion tal como  está documentado debe contener todo el path desde la organización hasta la localización final.
+
+
++ Cuando pulso sobre la pestaña "Beta" dentro de "Versiones de Agente" se abre automaticamente el selector de grupos predeterminados, sin posibilidad de cerrarlo.
+> El selector de grupos solo debe abrirse para seleccionar un grupo cuando quiero elegir o cambiar el grupo que recibirá la version beta.
++ Cuando hago click sobre un badge de un "DESPLIEGUE DE CHOCOLATEY ACTIVO" en la pestaña "Packages" de un agente, abre la vista "Despliegues de Chocolatey"  , con el campo de búsqueda rellenado con id:<id del despliegue> per no se muestra nada en la lista como si no lo encontrara, dice "No hay despliegues que coincidan"

@@ -8,7 +8,7 @@ He añadido nuevas tareas al ToDo.md vuelve a releerlo y hace lo que indica, haz
 Recuerda de marcar la tareas mientras las vas implementando tal como indica las instrucciones del archivo.
 
 ##
-A partir de ahora y hasta nuevo aviso estamos desarrollando en local, subas al git, ni despliegues en el LXC , ni compiles pswm.exe, salvo peticion expresa o hasta nuevo aviso.
+A partir de ahora y hasta nuevo aviso estamos desarrollando en local, no subas al git, ni despliegues en el LXC , ni compiles pswm.exe, salvo peticion expresa o hasta nuevo aviso.
 
 ##
 

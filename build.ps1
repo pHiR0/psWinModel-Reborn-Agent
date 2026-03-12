@@ -31,8 +31,46 @@ if (-not (Test-Path .\build)) {
 
 # Parámetros de compilación
 $buildVersion = ((Get-Date -Format 'yyyy.MM.dd.HHmm') + [math]::Floor((Get-Date).Second / 10).ToString())
+
+# Leer URL de servidor desde build-config.json si existe en el mismo directorio
+$buildConfigPath = Join-Path $PSScriptRoot "build-config.json"
+$buildDefaultServerUrl = $null
+if (Test-Path $buildConfigPath) {
+    try {
+        $buildConfig = Get-Content $buildConfigPath -Raw | ConvertFrom-Json
+        if ($buildConfig.PSObject.Properties['serverUrl'] -and $buildConfig.serverUrl) {
+            $buildDefaultServerUrl = $buildConfig.serverUrl
+            Write-Host "      build-config.json encontrado, URL del servidor: $buildDefaultServerUrl" -ForegroundColor Cyan
+        }
+    } catch {
+        Write-Host "      [WARN] Error leyendo build-config.json: $_" -ForegroundColor Yellow
+    }
+} else {
+    Write-Host "      No se encontro build-config.json, se usara la URL por defecto (http://localhost:3000)." -ForegroundColor DarkGray
+}
+
+# Si hay URL personalizada, generar una copia temporal de pswm.ps1 con la URL hardcodeada
+$sourceScript = ".\agent-core\pswm.ps1"
+$tempScript   = $null
+if ($buildDefaultServerUrl) {
+    $tempScript   = ".\agent-core\_pswm_build_temp.ps1"
+    $content = Get-Content $sourceScript -Raw -Encoding utf8
+    # Reemplaza la linea "  return "http://localhost:3000"" dentro de Get-ServerUrl
+    $oldLine = '  return "http://localhost:3000"'
+    $newLine = "  return `"$buildDefaultServerUrl`""
+    if ($content.Contains($oldLine)) {
+        $content = $content.Replace($oldLine, $newLine)
+        [System.IO.File]::WriteAllText((Resolve-Path ".\agent-core").Path + "\_pswm_build_temp.ps1", $content, [System.Text.Encoding]::UTF8)
+        Write-Host "      URL hardcodeada en script temporal: $buildDefaultServerUrl" -ForegroundColor Green
+        $sourceScript = $tempScript
+    } else {
+        Write-Host "      [WARN] No se encontro la linea de URL por defecto en pswm.ps1, se usara la URL original." -ForegroundColor Yellow
+        $tempScript = $null
+    }
+}
+
 $params = @{
-    inputFile = ".\agent-core\pswm.ps1"
+    inputFile = $sourceScript
     outputFile = ".\build\pswm.exe"
     title = "psWinModel Reborn Agent"
     version = $buildVersion
@@ -45,8 +83,14 @@ $params = @{
 }
 
 # Compilar
-Write-Host "[2/4] Compilando agent-core\pswm.ps1 -> build\pswm.exe  (version $buildVersion)..." -ForegroundColor Yellow
+Write-Host "[2/4] Compilando $sourceScript -> build\pswm.exe  (version $buildVersion)..." -ForegroundColor Yellow
 Invoke-ps2exe @params
+
+# Eliminar script temporal si se creó
+if ($tempScript -and (Test-Path $tempScript)) {
+    Remove-Item $tempScript -Force
+    Write-Host "      Script temporal eliminado." -ForegroundColor DarkGray
+}
 
 if (-not (Test-Path .\build\pswm.exe)) {
     Write-Host ""

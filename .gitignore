@@ -1,1 +1,3 @@
 build/pswm.exe
+# Configuración local de build (puede contener URL de servidor de producción)
+build-config.json
