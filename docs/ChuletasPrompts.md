@@ -13,3 +13,11 @@ A partir de ahora y hasta nuevo aviso estamos desarrollando en local, no subas a
 ##
 
 Ok, adelante con el despliegue en el LXC, mira en la documentacion para que te conectes por ssh, y descuida ya he hecho un snapshot del LXC por si acaso.
+
+## 
+
+Un usuario en la red comenta que la programacion con agentes de IA suele dar este problema:
+Otro proyecto vibe codeado que le encuentro la misma vulnerabilidad, le pone auth a los request pero no validan que info estan consumiendo, con un solo acceso puedo consumir toda la db basicamente
+¿Puedes verificar que no sucede en este proyecto?
+
+Solo quiero que lo compruebes pero no cambies nada 

@@ -104,6 +104,8 @@ $script:RemoveFiles = $RemoveFiles.IsPresent `
 $script:InstallOnRegister = $Install.IsPresent `
   -or ($ExtraArgs -contains '--install') `
   -or ($_rawCmdLine -match '(?:^|\s)--install(?:\s|$)')
+# --force: omitir comprobación de versión en el comando update
+$script:Force = ($ExtraArgs -contains '--force') -or ($_rawCmdLine -match '(?:^|\s)--force(?:\s|$)')
 # --show-choco-window: mostrar ventana de choco.exe en foreground (debug interactivo)
 $script:ShowChocoWindow = $ShowChocoWindow.IsPresent `
   -or ($ExtraArgs -contains '--show-choco-window') `
@@ -550,11 +552,15 @@ function Invoke-TimeSync([string]$serverUrl, [int]$agentId) {
       try {
         $privXml2 = [string](Get-Content -Raw -Path $script:PrivateKeyPath)
         $csp2.FromXmlString($privXml2)
-        # PS5.1: RSACryptoServiceProvider.Decrypt con fOAEP=$true usa SHA-1, no SHA-256.
-        # Necesitamos RSAEncryptionPadding.OaepSHA256 que solo esta en .NET 4.6+
-        # Usamos reflexión para acceder al método Decrypt(byte[], RSAEncryptionPadding) si está disponible
-        $oaepSha256 = [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256
-        $plainBytes = $csp2.Decrypt($encBytes, $oaepSha256)
+        # RSACryptoServiceProvider (PS5.1/CryptoAPI) no soporta OAEP-SHA256 directamente.
+        # Exportamos la clave a RSACng que sí lo soporta en .NET 4.6+.
+        $rsaCng = [System.Security.Cryptography.RSACng]::new()
+        try {
+          $rsaCng.ImportParameters($csp2.ExportParameters($true))
+          $plainBytes = $rsaCng.Decrypt($encBytes, [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
+        } finally {
+          $rsaCng.Dispose()
+        }
       } finally {
         $csp2.Dispose()
       }
@@ -1429,6 +1435,159 @@ function Invoke-Install {
   Write-Host "Servicio: $($script:ServiceName) (Automatic)"
   Write-Host ""
   Enable-ServiceAutostart
+  Exit-Cmd 0
+}
+
+function Invoke-UpdateBinaries {
+  <#
+  .SYNOPSIS
+    Actualiza los binarios del agente (pswm.exe, pswm_svc.exe, pswm_updater.exe) en el
+    directorio de instalacion. Solo toca los .exe; no modifica configuracion ni el registro
+    del servicio Windows (solo lo para y vuelve a arrancar si es necesario).
+    Si el servicio estaba arrancado lo para antes de copiar y lo reanuda al terminar.
+    Si el servicio estaba parado no se arranca tras la actualizacion.
+  #>
+
+  # Solo disponible como binario compilado
+  if (-not (Test-IsCompiled)) {
+    Write-Err "El comando update solo esta disponible para la version compilada (.exe)."
+    Exit-Cmd 1
+  }
+
+  # Requiere admin
+  if (-not (Test-IsAdmin)) {
+    Write-Err "El comando update requiere privilegios de administrador."
+    Exit-Cmd 1
+  }
+
+  $srcExe   = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+  $destDir  = $script:InstallDir
+  $destPswm = Join-Path $destDir 'pswm.exe'
+
+  # Crear directorio si no existe aun (primera instalacion limpia)
+  if (-not (Test-Path $destDir)) {
+    New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    Write-Success "Directorio creado: $destDir"
+  }
+
+  # Leer version del nuevo binario (el que estamos ejecutando)
+  $fiNew = $null
+  try {
+    $fiNew = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($srcExe)
+  } catch {
+    Write-Err "No se pudo leer la version del binario actual: $_"
+    Exit-Cmd 1
+  }
+  $verNew = if ($fiNew.FileVersion) { $fiNew.FileVersion.Trim() } else { '0.0.0.0' }
+
+  # Comprobar version instalada (si existe)
+  if (-not $script:Force -and (Test-Path $destPswm)) {
+    try {
+      $fiInst   = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($destPswm)
+      $verInst  = if ($fiInst.FileVersion) { $fiInst.FileVersion.Trim() } else { '0.0.0.0' }
+
+      # Normalizar: ps2exe puede generar "2026, 3, 12, 3095" con comas
+      $parsedNew  = [System.Version]::Parse(($verNew  -replace ',\s*', '.'))
+      $parsedInst = [System.Version]::Parse(($verInst -replace ',\s*', '.'))
+
+      Write-Info "Version instalada : $verInst"
+      Write-Info "Version nueva     : $verNew"
+
+      if ($parsedNew -le $parsedInst) {
+        Write-Err "La version nueva ($verNew) no es superior a la instalada ($verInst). Abortando."
+        Write-Host "Usa --force para forzar la actualizacion igualmente." -ForegroundColor Yellow
+        Exit-Cmd 1
+      }
+      Write-Info "Version superior detectada. Procediendo con la actualizacion..."
+    } catch {
+      Write-Err "No se pudo comparar versiones: $_"
+      Write-Host "Usa --force para omitir la comprobacion de version." -ForegroundColor Yellow
+      Exit-Cmd 1
+    }
+  } elseif ($script:Force) {
+    Write-Info "[--force] Comprobacion de version omitida."
+    if (Test-Path $destPswm) {
+      try {
+        $fiInst = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($destPswm)
+        Write-Info "Version instalada actualmente : $($fiInst.FileVersion)"
+      } catch { }
+    }
+    Write-Info "Version que se instalara      : $verNew"
+  } else {
+    Write-Info "No hay instalacion previa. Instalando binarios desde cero..."
+    Write-Info "Version que se instalara: $verNew"
+  }
+
+  # Guardar estado del servicio
+  $svc        = Get-Service -Name $script:ServiceName -ErrorAction SilentlyContinue
+  $wasRunning = $svc -and $svc.Status -eq 'Running'
+
+  if ($wasRunning) {
+    Write-Info "Deteniendo servicio '$($script:ServiceName)'..."
+    try {
+      Stop-Service -Name $script:ServiceName -Force -ErrorAction Stop
+      # Esperar hasta 10 segundos a que libere el file lock del exe
+      $waited = 0
+      do {
+        Start-Sleep -Milliseconds 500
+        $waited += 500
+        $svc = Get-Service -Name $script:ServiceName -ErrorAction SilentlyContinue
+      } while ($svc -and $svc.Status -ne 'Stopped' -and $waited -lt 10000)
+      Write-Success "Servicio detenido."
+    } catch {
+      Write-Err "No se pudo detener el servicio: $_"
+      Exit-Cmd 1
+    }
+  } elseif ($svc) {
+    Write-Info "Servicio '$($script:ServiceName)' existe pero no esta en ejecucion (estado: $($svc.Status))."
+  } else {
+    Write-Info "Servicio '$($script:ServiceName)' no instalado. Se actualizan solo los binarios."
+  }
+
+  # Copiar los tres binarios (todos son copias del mismo exe)
+  $destSvc     = Join-Path $destDir 'pswm_svc.exe'
+  $destUpdater = Join-Path $destDir 'pswm_updater.exe'
+  $copyOk      = $true
+
+  foreach ($entry in @(@{Name='pswm.exe'; Dst=$destPswm}, @{Name='pswm_svc.exe'; Dst=$destSvc}, @{Name='pswm_updater.exe'; Dst=$destUpdater})) {
+    try {
+      Copy-Item -Path $srcExe -Destination $entry.Dst -Force -ErrorAction Stop
+      Write-Success "$($entry.Name) actualizado"
+    } catch {
+      Write-Err "Error al copiar $($entry.Name): $_"
+      $copyOk = $false
+      break
+    }
+  }
+
+  # Restaurar estado del servicio (aunque haya fallo parcial)
+  if ($wasRunning) {
+    Write-Info "Reanudando servicio '$($script:ServiceName)'..."
+    try {
+      Start-Service -Name $script:ServiceName -ErrorAction Stop
+      Write-Success "Servicio reanudado."
+    } catch {
+      Write-Err "No se pudo rearrancar el servicio: $_"
+      Exit-Cmd 1
+    }
+  } else {
+    Write-Info "El servicio no estaba en ejecucion antes de actualizar; se deja parado."
+  }
+
+  if (-not $copyOk) { Exit-Cmd 1 }
+
+  # Leer version final instalada para confirmar
+  try {
+    $fiDone = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($destPswm)
+    $verDone = if ($fiDone.FileVersion) { $fiDone.FileVersion.Trim() } else { '?' }
+  } catch { $verDone = '?' }
+
+  Write-Host ""
+  Write-Host "=== Actualizacion completada ===" -ForegroundColor Green
+  Write-Host "Directorio : $destDir"
+  Write-Host "Version    : $verDone"
+  Write-Host "Servicio   : $(if ($wasRunning) { 'reanudado' } else { 'sin cambios (estaba parado/no instalado)' })"
+  Write-Host ""
   Exit-Cmd 0
 }
 
@@ -3703,6 +3862,11 @@ Comandos disponibles:
   gencert             Generar/regenerar par de claves RSA
   install             Instalar agente como servicio Windows (requiere .exe y admin)
                       Configura el servicio en inicio automatico (Automatic) y lo arranca
+  update              Actualizar binarios del agente en el directorio de instalacion (requiere .exe y admin)
+                      Compara versiones: solo instala si la nueva es superior a la instalada
+                      Si el servicio estaba en ejecucion lo para antes y lo reanuda al terminar
+                      Si no estaba en ejecucion solo actualiza los binarios, no lo arranca
+                      Opcion: --force  Omite la comprobacion de version (permite downgrade o reinstalar misma version)
   uninstall_service   Desinstalar servicio Windows del agente
                       Opcion: --remove-files  Elimina el directorio de instalacion completo
   svc                 Bucle de servicio (uso interno, ejecutado por el servicio)
@@ -3743,6 +3907,8 @@ Ejemplos:
   pswm.exe check_status
   pswm.exe view_config
   pswm.exe install
+  pswm.exe update
+  pswm.exe update --force
   pswm.exe uninstall_service
   pswm.exe uninstall_service --remove-files
   pswm.exe gencert -KeySize 4096
@@ -3772,6 +3938,7 @@ switch ($Command.ToLower()) {
   "gencert"           { Invoke-GenCert }
   "svc"               { Invoke-Svc }
   "install"           { Invoke-Install }
+  "update"            { Invoke-UpdateBinaries }
   "uninstall_service" { Invoke-UninstallService }
   "iterate"           { Invoke-Iterate }
   "reset_timers_lock" { Invoke-ResetTimersLock }
