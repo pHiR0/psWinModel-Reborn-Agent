@@ -303,7 +303,7 @@ function New-RsaKeyPairPem([int]$bits, [string]$privatePath, [string]$publicPath
 #region API Functions
 
 function Invoke-QueuePost([string]$serverUrl, [string]$hostname, [string]$publicKeyPath) {
-  $pub = Get-Content -Raw -Path $publicKeyPath
+  $pub = [string](Get-Content -Raw -Path $publicKeyPath)
   $os = (Get-CimInstance -ClassName Win32_OperatingSystem).Caption
   $facts = @{ os = $os; user = $env:USERNAME; hostname = $hostname }
   # Agregar marca, modelo y MACs para mostrar en la cola de aprobación
@@ -339,6 +339,314 @@ function Get-QueueStatus([string]$serverUrl, [int]$id) {
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     return $null
+  }
+}
+
+#region Agent JWT RS256
+
+# Variable de script para cachear el JWT generado durante la iteración
+$script:AgentJwt = $null
+
+function ConvertTo-Base64Url([byte[]]$bytes) {
+  $b64 = [System.Convert]::ToBase64String($bytes)
+  return $b64.TrimEnd('=').Replace('+','-').Replace('/','_')
+}
+
+function New-AgentJWT([int]$agentId) {
+  <#
+  .SYNOPSIS
+    Genera un JWT RS256 firmado con la clave privada del agente.
+    Header: {"alg":"RS256","typ":"JWT"}
+    Payload: {"agent_id":<id>,"iat":<unix>,"exp":<unix+5400>,"jti":"<uuid>"}
+    TTL: 90 minutos (5400 segundos)
+  #>
+  if (-not (Test-Path $script:PrivateKeyPath)) {
+    throw "Clave privada no encontrada: $script:PrivateKeyPath"
+  }
+
+  # Header
+  $headerJson = '{"alg":"RS256","typ":"JWT"}'
+  $headerB64 = ConvertTo-Base64Url ([System.Text.Encoding]::UTF8.GetBytes($headerJson))
+
+  # Payload
+  $now = [DateTimeOffset]::UtcNow
+  $iat = [int64]$now.ToUnixTimeSeconds()
+  $exp = [int64]($iat + 5400)
+  $jti = [guid]::NewGuid().ToString()
+  $payloadJson = "{`"agent_id`":$agentId,`"iat`":$iat,`"exp`":$exp,`"jti`":`"$jti`"}"
+  $payloadB64 = ConvertTo-Base64Url ([System.Text.Encoding]::UTF8.GetBytes($payloadJson))
+
+  # Data to sign
+  $dataToSign = "$headerB64.$payloadB64"
+  $dataBytes = [System.Text.Encoding]::UTF8.GetBytes($dataToSign)
+
+  # Sign with RSA-SHA256
+  if (-not $script:UseLegacyRsa) {
+    # PowerShell 7+
+    $privPem = [string](Get-Content -Raw -Path $script:PrivateKeyPath)
+    $rsa = [System.Security.Cryptography.RSA]::Create()
+    try {
+      $rsa.ImportFromPem($privPem)
+      $sigBytes = $rsa.SignData($dataBytes, [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+                                [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+    } finally {
+      $rsa.Dispose()
+    }
+  } else {
+    # PowerShell 5.1 — la clave privada se almacena como XML
+    $privXml = [string](Get-Content -Raw -Path $script:PrivateKeyPath)
+    $csp = New-Object System.Security.Cryptography.RSACryptoServiceProvider
+    try {
+      $csp.FromXmlString($privXml)
+      $sigBytes = $csp.SignData($dataBytes, [System.Security.Cryptography.SHA256CryptoServiceProvider]::new())
+    } finally {
+      $csp.Dispose()
+    }
+  }
+
+  $sigB64 = ConvertTo-Base64Url $sigBytes
+  $jwt = "$dataToSign.$sigB64"
+  $script:AgentJwt = $jwt
+  return $jwt
+}
+
+function Get-AgentAuthHeaders() {
+  <# Devuelve un hashtable con los headers de autenticación del agente #>
+  if (-not $script:AgentJwt) {
+    throw "JWT del agente no generado. Llame a New-AgentJWT primero."
+  }
+  return @{ 'Authorization' = "Bearer $($script:AgentJwt)" }
+}
+
+function Invoke-AgentRestMethod {
+  <#
+  .SYNOPSIS
+    Wrapper de Invoke-RestMethod que añade automáticamente el header Authorization con el JWT del agente.
+    Acepta los mismos parámetros que Invoke-RestMethod.
+  #>
+  param(
+    [string]$Uri,
+    [string]$Method = 'Get',
+    [string]$Body = $null,
+    [string]$ContentType = 'application/json',
+    [string]$OutFile = $null
+  )
+  $headers = Get-AgentAuthHeaders
+  $params = @{
+    Uri     = $Uri
+    Method  = $Method
+    Headers = $headers
+    ErrorAction = 'Stop'
+  }
+  if ($Body) { $params['Body'] = $Body; $params['ContentType'] = $ContentType }
+  if ($OutFile) { $params['OutFile'] = $OutFile }
+  return Invoke-RestMethod @params
+}
+
+function Invoke-AgentWebRequest {
+  <#
+  .SYNOPSIS
+    Wrapper de Invoke-WebRequest que añade automáticamente el header Authorization con el JWT del agente.
+  #>
+  param(
+    [string]$Uri,
+    [string]$OutFile = $null
+  )
+  $headers = Get-AgentAuthHeaders
+  $params = @{
+    Uri     = $Uri
+    Headers = $headers
+    ErrorAction = 'Stop'
+  }
+  if ($OutFile) { $params['OutFile'] = $OutFile }
+  return Invoke-WebRequest @params
+}
+
+#endregion Agent JWT RS256
+
+#region Time Sync
+
+function Invoke-TimeSync([string]$serverUrl, [int]$agentId) {
+  <#
+  .SYNOPSIS
+    Sincroniza el reloj del agente con el servidor usando RSA.
+    1. Firma el timestamp UTC actual con la clave privada del agente.
+    2. POST /api/time/sync con { agent_id, signed_timestamp: { data, signature } }
+    3. Si status='sync_needed', descifra el timestamp del servidor y ajusta el reloj.
+    No requiere JWT (es pre-JWT).
+  #>
+  Write-Info "[TimeSync] Iniciando sincronización de reloj..."
+
+  if (-not (Test-Path $script:PrivateKeyPath)) {
+    Write-Info "[TimeSync] Clave privada no encontrada. Omitiendo."
+    return
+  }
+
+  # Timestamp UTC actual
+  $nowUtc = [DateTimeOffset]::UtcNow.ToString('o')
+  $dataBytes = [System.Text.Encoding]::UTF8.GetBytes($nowUtc)
+
+  # Firmar con clave privada
+  if (-not $script:UseLegacyRsa) {
+    $privPem = [string](Get-Content -Raw -Path $script:PrivateKeyPath)
+    $rsa = [System.Security.Cryptography.RSA]::Create()
+    try {
+      $rsa.ImportFromPem($privPem)
+      $sigBytes = $rsa.SignData($dataBytes, [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+                                [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+    } finally {
+      $rsa.Dispose()
+    }
+  } else {
+    $privXml = [string](Get-Content -Raw -Path $script:PrivateKeyPath)
+    $csp = New-Object System.Security.Cryptography.RSACryptoServiceProvider
+    try {
+      $csp.FromXmlString($privXml)
+      $sigBytes = $csp.SignData($dataBytes, [System.Security.Cryptography.SHA256CryptoServiceProvider]::new())
+    } finally {
+      $csp.Dispose()
+    }
+  }
+
+  $sigB64 = [System.Convert]::ToBase64String($sigBytes)
+
+  $body = @{
+    agent_id         = $agentId
+    signed_timestamp = @{
+      data      = $nowUtc
+      signature = $sigB64
+    }
+  } | ConvertTo-Json -Depth 3 -Compress
+
+  try {
+    $res = Invoke-RestMethod -Uri "$serverUrl/api/time/sync" -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "[TimeSync] Error contactando servidor: $_ (continuando)"
+    return
+  }
+
+  if ($res.status -eq 'ok') {
+    Write-Success "[TimeSync] Reloj sincronizado (drift: $($res.drift_seconds)s)"
+    return
+  }
+
+  if ($res.status -eq 'sync_needed') {
+    Write-Info "[TimeSync] Desfase detectado ($($res.drift_seconds)s). Ajustando reloj..."
+    $encBytes = [System.Convert]::FromBase64String($res.encrypted_server_time)
+
+    # Descifrar con clave privada (OAEP SHA-256)
+    if (-not $script:UseLegacyRsa) {
+      $rsa2 = [System.Security.Cryptography.RSA]::Create()
+      try {
+        $privPem2 = [string](Get-Content -Raw -Path $script:PrivateKeyPath)
+        $rsa2.ImportFromPem($privPem2)
+        $plainBytes = $rsa2.Decrypt($encBytes, [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256)
+      } finally {
+        $rsa2.Dispose()
+      }
+    } else {
+      $csp2 = New-Object System.Security.Cryptography.RSACryptoServiceProvider
+      try {
+        $privXml2 = [string](Get-Content -Raw -Path $script:PrivateKeyPath)
+        $csp2.FromXmlString($privXml2)
+        # PS5.1: RSACryptoServiceProvider.Decrypt con fOAEP=$true usa SHA-1, no SHA-256.
+        # Necesitamos RSAEncryptionPadding.OaepSHA256 que solo esta en .NET 4.6+
+        # Usamos reflexión para acceder al método Decrypt(byte[], RSAEncryptionPadding) si está disponible
+        $oaepSha256 = [System.Security.Cryptography.RSAEncryptionPadding]::OaepSHA256
+        $plainBytes = $csp2.Decrypt($encBytes, $oaepSha256)
+      } finally {
+        $csp2.Dispose()
+      }
+    }
+
+    $serverTimeStr = [System.Text.Encoding]::UTF8.GetString($plainBytes)
+    $serverTime = [DateTimeOffset]::Parse($serverTimeStr)
+    $localTime = $serverTime.LocalDateTime
+
+    try {
+      Set-Date -Date $localTime -ErrorAction Stop | Out-Null
+      Write-Success "[TimeSync] Reloj ajustado a: $localTime"
+    } catch {
+      if ("$_" -match "^EXIT:\d+$") { throw }
+      Write-Err "[TimeSync] No se pudo ajustar el reloj (requiere permisos de administrador): $_"
+    }
+  }
+}
+
+#endregion Time Sync
+
+function Register-AgentKey([string]$serverUrl, [int]$agentId) {
+  <#
+  .SYNOPSIS
+    Registra (o reemplaza) la clave pública del agente en el servidor.
+    Se usa cuando el servidor indica 'invalid_public_key' — situación que puede
+    darse en agentes registrados ANTES de que se implementase JWT RS256, o si la
+    clave nunca se almacenó correctamente.
+
+    Prueba de posesión: el agente firma { agent_id, ts } con su clave privada y
+    envía la firma junto con la clave pública → el servidor verifica con la clave
+    enviada y sólo acepta si la clave almacenada es inválida o nula.
+    Sin JWT (bootstrap).
+  #>
+  Write-Info "[RegisterKey] Registrando clave pública en el servidor (agent_id: $agentId)..."
+
+  if (-not (Test-Path $script:PrivateKeyPath)) {
+    Write-Err "[RegisterKey] Clave privada no encontrada en $($script:PrivateKeyPath)"
+    return $false
+  }
+  if (-not (Test-Path $script:PublicKeyPath)) {
+    Write-Err "[RegisterKey] Clave pública no encontrada en $($script:PublicKeyPath)"
+    return $false
+  }
+
+  $pubPem  = [string](Get-Content -Raw -Path $script:PublicKeyPath)
+  $proofData = @{ agent_id = $agentId; ts = [DateTimeOffset]::UtcNow.ToString('o') } | ConvertTo-Json -Compress
+  $dataBytes = [System.Text.Encoding]::UTF8.GetBytes($proofData)
+
+  # Firmar con clave privada (RSA-SHA256)
+  if (-not $script:UseLegacyRsa) {
+    $privPem = [string](Get-Content -Raw -Path $script:PrivateKeyPath)
+    $rsa = [System.Security.Cryptography.RSA]::Create()
+    try {
+      $rsa.ImportFromPem($privPem)
+      $sigBytes = $rsa.SignData($dataBytes,
+        [System.Security.Cryptography.HashAlgorithmName]::SHA256,
+        [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+    } finally { $rsa.Dispose() }
+  } else {
+    $privXml = [string](Get-Content -Raw -Path $script:PrivateKeyPath)
+    $csp = New-Object System.Security.Cryptography.RSACryptoServiceProvider
+    try {
+      $csp.FromXmlString($privXml)
+      $sigBytes = $csp.SignData($dataBytes, [System.Security.Cryptography.SHA256CryptoServiceProvider]::new())
+    } finally { $csp.Dispose() }
+  }
+
+  $sigB64 = [System.Convert]::ToBase64String($sigBytes)
+
+  $body = @{
+    public_key = $pubPem
+    proof      = @{
+      data      = $proofData
+      signature = $sigB64
+    }
+  } | ConvertTo-Json -Depth 4 -Compress
+
+  try {
+    $res = Invoke-RestMethod -Uri "$serverUrl/api/agents/$agentId/register-key" `
+      -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop
+    Write-Success "[RegisterKey] Clave pública registrada correctamente."
+    return $true
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    $errMsg = "$_"
+    if ($errMsg -match 'agent_already_has_valid_key') {
+      Write-Info "[RegisterKey] El servidor ya tiene una clave válida para este agente."
+      return $false
+    }
+    Write-Err "[RegisterKey] Error en el registro de clave: $errMsg"
+    return $false
   }
 }
 
@@ -517,7 +825,7 @@ function Invoke-RegToken {
   }
 
   # Leer clave publica
-  $pubKey = Get-Content $script:PublicKeyPath -Raw
+  $pubKey = [string](Get-Content -Raw -Path $script:PublicKeyPath)
 
   # POST /api/agents/register/token
   Write-Info "Enviando registro con token..."
@@ -1401,7 +1709,7 @@ function Send-Facts([string]$serverUrl, [int]$agentId, [array]$facts) {
   $body = @{ facts = $facts } | ConvertTo-Json -Depth 5 -Compress
   $uri  = "$serverUrl/api/facts/$agentId"
   try {
-    $res = Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop
+    $res = Invoke-AgentRestMethod -Uri $uri -Method Post -Body $body
     return $res
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
@@ -1413,7 +1721,7 @@ function Send-Facts([string]$serverUrl, [int]$agentId, [array]$facts) {
 function Get-PendingDeployments([string]$serverUrl, [int]$agentId) {
   $uri = "$serverUrl/api/deployments/agent/$agentId"
   try {
-    $res = Invoke-RestMethod -Uri $uri -Method Get -ErrorAction Stop
+    $res = Invoke-AgentRestMethod -Uri $uri -Method Get
     return @($res.deployments)  # @() garantiza array aunque solo haya 1 elemento
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
@@ -1563,7 +1871,7 @@ function Send-ScriptRun(
   }
   $uri = "$serverUrl/api/deployments/runs"
   try {
-    Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+    Invoke-AgentRestMethod -Uri $uri -Method Post -Body $body | Out-Null
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Err "Error reportando script run: $_"
@@ -1574,7 +1882,7 @@ function Get-ResolvedChocoConfig([string]$serverUrl, [int]$agentId) {
   <# Obtiene la configuración choco resuelta (merged) para este agente #>
   $uri = "$serverUrl/api/choco/resolved/$agentId"
   try {
-    $res = Invoke-RestMethod -Uri $uri -Method Get -ErrorAction Stop
+    $res = Invoke-AgentRestMethod -Uri $uri -Method Get
     return $res.resolved  # { profile, packages, last_update }
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
@@ -2054,7 +2362,7 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
       $updateTs = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')
       try {
         $body = @{ timestamp = $updateTs } | ConvertTo-Json -Compress
-        Invoke-RestMethod -Uri "$serverUrl/api/choco/resolved/$agentId/mark-update" -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+        Invoke-AgentRestMethod -Uri "$serverUrl/api/choco/resolved/$agentId/mark-update" -Method Post -Body $body | Out-Null
       } catch {
         if ("$_" -match "^EXIT:\d+$") { throw }
         Write-Info "    Error marcando timestamp de actualización en servidor: $_"
@@ -2159,7 +2467,7 @@ function Send-ChocoRun(
   }
   $uri = "$serverUrl/api/choco/runs"
   try {
-    Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+    Invoke-AgentRestMethod -Uri $uri -Method Post -Body $body | Out-Null
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Err "Error reportando choco run: $_"
@@ -2206,7 +2514,7 @@ function Sync-ChocoInventory([string]$serverUrl, [int]$agentId, [object]$resolve
       packages = $packages
     } | ConvertTo-Json -Depth 3 -Compress
     $uri = "$serverUrl/api/choco/agent-packages"
-    Invoke-RestMethod -Uri $uri -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+    Invoke-AgentRestMethod -Uri $uri -Method Post -Body $body | Out-Null
     Write-Info "Inventario choco sincronizado: $($packages.Count) paquetes ($($managedLookup.Count) gestionados)"
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
@@ -2251,7 +2559,7 @@ function Invoke-CheckAndApplyUpdate([string]$serverUrl, [int]$agentId = 0, [stri
   $agentIdParam = if ($agentId -and $agentId -gt 0) { "&agent_id=$agentId" } else { "" }
   $uri = "$serverUrl/api/updates/check?current_version=$([System.Uri]::EscapeDataString($currentVersion))$agentIdParam"
   try {
-    $checkRes = Invoke-RestMethod -Uri $uri -Method Get -ErrorAction Stop
+    $checkRes = Invoke-AgentRestMethod -Uri $uri -Method Get
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Info "No se pudo comprobar actualizaciones: $_"
@@ -2285,7 +2593,7 @@ function Invoke-CheckAndApplyUpdate([string]$serverUrl, [int]$agentId = 0, [stri
   Write-Info "Descargando actualizacion..."
   $downloadUri = "$serverUrl/api/updates/download"
   try {
-    Invoke-WebRequest -Uri $downloadUri -OutFile $tempFile -ErrorAction Stop
+    Invoke-AgentWebRequest -Uri $downloadUri -OutFile $tempFile
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Err "Error descargando actualizacion: $_"
@@ -2522,7 +2830,7 @@ function Start-AgentIteration([string]$serverUrl, [int]$agentId, [string]$iterat
       iteration_id = $iterationId
       started_at   = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ss')
     }
-    Invoke-RestMethod -Uri "$serverUrl/api/agents/$agentId/iterations" -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+    Invoke-AgentRestMethod -Uri "$serverUrl/api/agents/$agentId/iterations" -Method Post -Body $body | Out-Null
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Info "  [ITER] Error registrando inicio de iteración: $_ (no fatal)"
@@ -2538,7 +2846,7 @@ function Finish-AgentIteration([string]$serverUrl, [int]$agentId, [string]$itera
       finished_at = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ss')
       had_errors  = if ($hadErrors) { 1 } else { 0 }
     }
-    Invoke-RestMethod -Uri "$serverUrl/api/agents/$agentId/iterations/$iterationId" -Method Patch -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+    Invoke-AgentRestMethod -Uri "$serverUrl/api/agents/$agentId/iterations/$iterationId" -Method Patch -Body $body | Out-Null
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Info "  [ITER] Error registrando fin de iteración: $_ (no fatal)"
@@ -2557,7 +2865,7 @@ function Send-ChocoInstallRun([string]$serverUrl, [int]$agentId, [string]$iterat
       stdout       = if ($stdout.Length -gt 10000) { $stdout.Substring(0, 10000) + "`n...[truncado]" } else { $stdout }
       iteration_id = $iterationId
     }
-    Invoke-RestMethod -Uri "$serverUrl/api/deployments/runs" -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+    Invoke-AgentRestMethod -Uri "$serverUrl/api/deployments/runs" -Method Post -Body $body | Out-Null
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Info "  [CHOCO-INSTALL] Error registrando instalación en iteración: $_ (no fatal)"
@@ -2577,7 +2885,7 @@ function Send-UpdateRun([string]$serverUrl, [int]$agentId, [string]$iterationId,
       stdout       = "Actualización de agente iniciada: v$fromVersion → v$toVersion"
       iteration_id = $iterationId
     }
-    Invoke-RestMethod -Uri "$serverUrl/api/deployments/runs" -Method Post -Body $body -ContentType 'application/json' -ErrorAction Stop | Out-Null
+    Invoke-AgentRestMethod -Uri "$serverUrl/api/deployments/runs" -Method Post -Body $body | Out-Null
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Info "  [UPDATE] Error registrando actualización en iteración: $_ (no fatal)"
@@ -2673,7 +2981,29 @@ function Invoke-Iterate {
     Exit-Cmd 2
   }
 
-  # Notificar al servidor el inicio de la iteracion
+  # ---- PRE-PASO: Sincronización de reloj (antes de generar JWT) ----
+  try {
+    Invoke-TimeSync -serverUrl $srvUrl -agentId $agentId
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "[TimeSync] Error en sincronización de reloj: $_ (continuando)"
+  }
+
+  # ---- PRE-PASO: Asegurar que la clave pública está registrada en el servidor ----
+  # Register-AgentKey sólo actualiza la BD si la clave almacenada es nula o inválida
+  # (retorna $false silenciosamente cuando ya existe clave válida).
+  Register-AgentKey -serverUrl $srvUrl -agentId $agentId | Out-Null
+
+  # ---- PRE-PASO: Generar JWT RS256 para autenticar todas las llamadas ----
+  try {
+    $jwt = New-AgentJWT -agentId $agentId
+    Write-Success "JWT RS256 generado (TTL: 90 min)"
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Err "Error generando JWT del agente: $_. No se puede continuar."
+    Exit-Cmd 5
+  }
+
   Start-AgentIteration -serverUrl $srvUrl -agentId $agentId -iterationId $script:IterationId
 
   # ---- PASO 1: Facts ----
@@ -2733,7 +3063,7 @@ function Invoke-Iterate {
               )
               $factBody = ConvertTo-Json -Depth 5 -Compress @{ facts = $factArray }
               $factUri = "$srvUrl/api/facts/$agentId"
-              Invoke-RestMethod -Uri $factUri -Method Post -Body $factBody -ContentType 'application/json' -ErrorAction Stop | Out-Null
+              Invoke-AgentRestMethod -Uri $factUri -Method Post -Body $factBody | Out-Null
               Write-Success "    Fact generado: $factKey"
             } catch {
               if ("$_" -match "^EXIT:\d+$") { throw }
@@ -2777,7 +3107,7 @@ function Invoke-Iterate {
       Write-Info "Chocolatey no encontrado. Intentando instalar desde configuración del servidor..."
       $chocoInstallStartedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
       $chocoScriptUri = "$srvUrl/api/settings/choco-install-script?agent_id=$agentId"
-      $scriptRes = Invoke-RestMethod -Uri $chocoScriptUri -Method Get -ErrorAction Stop
+      $scriptRes = Invoke-AgentRestMethod -Uri $chocoScriptUri -Method Get
       if ($scriptRes.script -and $scriptRes.script.Trim()) {
         $tmpScript = [System.IO.Path]::GetTempFileName() + '.ps1'
         [System.IO.File]::WriteAllText($tmpScript, $scriptRes.script, [System.Text.Encoding]::UTF8)
@@ -2888,7 +3218,7 @@ function Invoke-Iterate {
           try {
             $fkey = ($dep.name -replace '[^a-zA-Z0-9_]','_').ToLower()
             $fb = ConvertTo-Json -Depth 5 -Compress @{ facts = @(@{ fact_key=$fkey; value=$fr.Stdout.Trim(); source='script'; script_name=$dep.name }) }
-            Invoke-RestMethod -Uri "$srvUrl/api/facts/$agentId" -Method Post -Body $fb -ContentType 'application/json' -ErrorAction Stop | Out-Null
+            Invoke-AgentRestMethod -Uri "$srvUrl/api/facts/$agentId" -Method Post -Body $fb | Out-Null
             Write-Success "    Fact script post-iter actualizado: $fkey"
           } catch { if ("$_" -match "^EXIT:\d+$") { throw } }
         }
