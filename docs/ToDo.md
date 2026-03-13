@@ -345,3 +345,181 @@ https://pswm-server.phiro.es/agent/pswm.exe" , pues quiero que junto a la casill
 + Respecto al boliche azul que hemos implementado para resaltar que hay equipo nuevos con enrolamiento por token, quiero proponer una alternativa al visto, que sea cuando pulse explicitamente sobre el boliche azul
 > Ademas quiero que cuando pase el punto por encima cambiede color se ponga verde con un simbolo de "Marca de Verificacion" ademas haga popup un tooltip estilo viñeta, hacia la derecha que diga marcar como visto X equipos nuevos.
 # Implementado: el badge azul en el sidebar es ahora un botón interactivo. Al hacer hover → cambia a verde con ✓ y muestra tooltip tipo viñeta "Marcar como visto · X equipos nuevos". Al hacer click → llama markTokenAgentsSeen() que guarda localStorage.agentsLastSeen y resetea el contador. Ya no se marca automáticamente al visitar /agents.
+
++ El popup junto al boliche azul , estilo viñeta que dice "Marcar como visto X euipos nuevos" , se ve cortada cuando sobresale por la derecha de la zona del side menu (adjunto captura)
+> Además cuando ejecuto desde npm run dev , me gustaría poder activar el boliche azul al fin de poder testearlo, añade una configuracion dentro de la configuracion del sistema en una nueva pestaña que se llame "DEV - LAB"
+# Corregido: tooltip ahora usa position:fixed calculado con getBoundingClientRect() — ya no se corta. DEV-LAB añadido en Configuración → pestaña 🧪 DEV - LAB con toggle para forzar el boliche azul (guarda en localStorage devLab_forceBlueBadge).
++ El emoji 🆕 que aparece cuando es un agente de nueva icorporación , quiero que apareza a la izquierda del ID del equipo, y quitalo de estar junto al nombre
+# Corregido: 🆕 ahora aparece a la izquierda del ID en su propia columna. Eliminado del campo nombre.
++ En el DashBoard general en la Card Agentes, el recuento tiene que ser de todos menos lo desactivados, pero debajo, en el pie de la card indicas el total real, con desactivados.
+# Corregido: stats.agents = agentes con status !== 'disabled'. Si el total difiere, se muestra pie: "Total con deshabilitados: N".
+
++ La pestaña "DEV - LAB" en Configuracion del Servidor, solo debe estar disponible si el web console se está ejecutando con npm run dev
+# Implementado: import { dev } from '$app/environment' en settings/+page.svelte. El botón de la pestaña DEV-LAB se envuelve en {#if dev}{/if}. En producción (build) la variable dev es false y la pestaña no aparece.
++ He publicado en el canal Beta una version nueva del agente:
+> La version del agente Estable es actualmente 2026.3.12.03474 con modo de publicación Upgrade
+> He publicado en el canal beta la version 2026.3.13.02081 con modo de actualizacion beta a Upgrade
+> He metido un agente en el grupo designado para actualizaciones beta
+> He lanzado manualmente una iteracion en ese agente con "pswm iterate" y me da el siguiente error
+----
+PS C:\Program Files\pswm-reborn> .\pswm.exe iterate
+[INFO] === Iniciando iteracion ===
+[INFO] Iteration ID: 639089707242612006
+[INFO] Agent ID: 4 | Server: https://pswm-server.phiro.es
+[INFO] [TimeSync] Iniciando sincronización de reloj...
+[OK] [TimeSync] Reloj sincronizado (drift: 1s)
+[INFO] [RegisterKey] Registrando clave pública en el servidor (agent_id: 4)...
+[INFO] [RegisterKey] El servidor ya tiene una clave válida para este agente.
+[OK] JWT RS256 generado (TTL: 90 min)
+[INFO] Paso 1/4: Recopilando y enviando facts...
+[OK] Facts enviados: 22 registros
+[INFO] Paso 2/4: Consultando scripts pendientes...
+[INFO] 4 despliegue(s) de scripts encontrados
+[INFO]   Facts: 2 | Actions: 2
+[INFO]   --- Ejecutando fact scripts ---
+[INFO]   [FACT] Ejecutando script 'Get-BitLocker' (deployment 1, script 3)...
+[INFO]     Exit code: 0
+[OK]     Fact generado: get_bitlocker
+[INFO]   [FACT] Ejecutando script 'Get-Services' (deployment 2, script 2)...
+[INFO]     Exit code: 0
+[OK]     Fact generado: get_services
+[INFO]   --- Ejecutando action scripts ---
+[INFO]   [ACTION] Ejecutando script 'ShowRunAsDifferentUserInStart' (deployment 3, script 1)...
+[INFO]     Exit code: 0
+[INFO]   [ACTION] Ejecutando script 'remedy-CVE202230190' (deployment 4, script 4)...
+[INFO]     Exit code: 0
+[OK] Scripts procesados
+[INFO] Paso 3/5: Obteniendo configuración Chocolatey resuelta...
+[INFO]   Config resuelta: 21 paquete(s), perfil: upgrade-all
+[INFO]   Recolectando estado actual de Chocolatey...
+[INFO]   Estado: 29 paquetes, 2 pins, 1 sources, 30 features
+[INFO]   Fase 1: Sincronizando sources...
+[INFO]   Fase 2: Sincronizando features...
+[INFO]   Fase 3: Sincronizando configuración...
+[INFO]   Fase 6: Instalando paquetes...
+[INFO]     7zip ya instalado (v26.0.0), saltando instalación
+[INFO]     googlechrome ya instalado (v146.0.7680.66), saltando instalación
+[INFO]     winrar ya instalado (v7.20.0), saltando instalación
+[INFO]     adobereader ya instalado (v2025.1.21223), saltando instalación
+[INFO]     anydesk ya instalado (v9.6.11), saltando instalación
+[INFO]     autoruns ya instalado (v14.11.0), saltando instalación
+[INFO]     googledrive ya instalado (v121.0.1), saltando instalación
+[INFO]     handbrake ya instalado (v1.11.0), saltando instalación
+[INFO]     jre8 ya instalado (v8.0.481), saltando instalación
+[INFO]     paint.net ya instalado (v5.1.12), saltando instalación
+[INFO]     pdfcreator ya instalado (v6.2.2), saltando instalación
+[INFO]     tcping ya instalado (v0.39.20180614), saltando instalación
+[INFO]     vlc ya instalado (v3.0.23), saltando instalación
+[INFO]   Fase 6b: Adoptando 8 paquete(s) (sólo si ya instalados)...
+[INFO]     chocolatey-compatibility.extension adoptado sin cambio de versión (v1.0.0)
+[INFO]     chocolatey-core.extension adoptado sin cambio de versión (v1.4.0)
+[INFO]     chocolatey-os-dependency.extension no está instalado, adoptarlo ignorado
+[INFO]     chocolatey-windowsupdate.extension adoptado sin cambio de versión (v1.0.5)
+[INFO]     dontsleep no está instalado, adoptarlo ignorado
+[INFO]     dontsleep.install no está instalado, adoptarlo ignorado
+[INFO]     foxitreader no está instalado, adoptarlo ignorado
+[INFO]     spotify no está instalado, adoptarlo ignorado
+[INFO]   Fase 7: Ajustando pins...
+[INFO]   Fase 8: Saltando actualización - lock local: última hace 0.9d, frecuencia=1 días. (C:\ProgramData\pswm-reborn\choco_update_lock.json)
+[INFO]   Resultado choco: OK
+[OK] Configuración Chocolatey procesada
+[INFO] Paso 4/5: Sincronizando inventario Chocolatey...
+[INFO]   [choco outdated] Usando caché (-1.9h de antigüedad, límite 16h). Archivo: C:\ProgramData\pswm-reborn\choco_outdated_cache.json
+[INFO] Inventario choco sincronizado: 29 paquetes (21 gestionados)
+[INFO] Paso 5/5: Comprobando actualizaciones...
+[INFO] Version actual: 2026.03.12.03474
+[INFO] Actualizacion disponible (modo upgrade): v2026.3.13.2081
+[INFO] Descargando actualizacion...
+[ERROR] Error descargando actualizacion: {"error":"no update available"}
+[INFO] pswm_updater.exe ya esta sincronizado (v2026.03.12.03474)
+[INFO] Paso 6: Re-generando facts (post-iteracion)...
+[OK] Facts post-iteracion enviados: 22 registros
+[OK]     Fact script post-iter actualizado: get_bitlocker
+[OK]     Fact script post-iter actualizado: get_services
+[OK] === Iteracion completada en 1m 2seg ===
+PS C:\Program Files\pswm-reborn> .\pswm.exe version
+psWinModel Reborn Agent v2026.03.12.03474
+PowerShell 5.1.26100.1591
+Modo: Legacy RSA (PowerShell < 7)
+PS C:\Program Files\pswm-reborn> .\pswm.exe version
+psWinModel Reborn Agent v2026.03.12.03474
+PowerShell 5.1.26100.1591
+Modo: Legacy RSA (PowerShell < 7)
+PS C:\Program Files\pswm-reborn> .\pswm.exe iterate
+[INFO] === Iniciando iteracion ===
+[INFO] Iteration ID: 639089710787264519
+[INFO] Agent ID: 4 | Server: https://pswm-server.phiro.es
+[INFO] [TimeSync] Iniciando sincronización de reloj...
+[OK] [TimeSync] Reloj sincronizado (drift: 1s)
+[INFO] [RegisterKey] Registrando clave pública en el servidor (agent_id: 4)...
+[INFO] [RegisterKey] El servidor ya tiene una clave válida para este agente.
+[OK] JWT RS256 generado (TTL: 90 min)
+[INFO] Paso 1/4: Recopilando y enviando facts...
+[OK] Facts enviados: 22 registros
+[INFO] Paso 2/4: Consultando scripts pendientes...
+[INFO] 4 despliegue(s) de scripts encontrados
+[INFO]   Facts: 2 | Actions: 2
+[INFO]   --- Ejecutando fact scripts ---
+[INFO]   [FACT] Ejecutando script 'Get-BitLocker' (deployment 1, script 3)...
+[INFO]     Exit code: 0
+[OK]     Fact generado: get_bitlocker
+[INFO]   [FACT] Ejecutando script 'Get-Services' (deployment 2, script 2)...
+[INFO]     Exit code: 0
+[OK]     Fact generado: get_services
+[INFO]   --- Ejecutando action scripts ---
+[INFO]   [ACTION] Ejecutando script 'ShowRunAsDifferentUserInStart' (deployment 3, script 1)...
+[INFO]     Exit code: 0
+[INFO]   [ACTION] Ejecutando script 'remedy-CVE202230190' (deployment 4, script 4)...
+[INFO]     Exit code: 0
+[OK] Scripts procesados
+[INFO] Paso 3/5: Obteniendo configuración Chocolatey resuelta...
+[INFO]   Config resuelta: 21 paquete(s), perfil: upgrade-all
+[INFO]   Recolectando estado actual de Chocolatey...
+[INFO]   Estado: 29 paquetes, 2 pins, 1 sources, 30 features
+[INFO]   Fase 1: Sincronizando sources...
+[INFO]   Fase 2: Sincronizando features...
+[INFO]   Fase 3: Sincronizando configuración...
+[INFO]   Fase 6: Instalando paquetes...
+[INFO]     7zip ya instalado (v26.0.0), saltando instalación
+[INFO]     googlechrome ya instalado (v146.0.7680.66), saltando instalación
+[INFO]     winrar ya instalado (v7.20.0), saltando instalación
+[INFO]     adobereader ya instalado (v2025.1.21223), saltando instalación
+[INFO]     anydesk ya instalado (v9.6.11), saltando instalación
+[INFO]     autoruns ya instalado (v14.11.0), saltando instalación
+[INFO]     googledrive ya instalado (v121.0.1), saltando instalación
+[INFO]     handbrake ya instalado (v1.11.0), saltando instalación
+[INFO]     jre8 ya instalado (v8.0.481), saltando instalación
+[INFO]     paint.net ya instalado (v5.1.12), saltando instalación
+[INFO]     pdfcreator ya instalado (v6.2.2), saltando instalación
+[INFO]     tcping ya instalado (v0.39.20180614), saltando instalación
+[INFO]     vlc ya instalado (v3.0.23), saltando instalación
+[INFO]   Fase 6b: Adoptando 8 paquete(s) (sólo si ya instalados)...
+[INFO]     chocolatey-compatibility.extension adoptado sin cambio de versión (v1.0.0)
+[INFO]     chocolatey-core.extension adoptado sin cambio de versión (v1.4.0)
+[INFO]     chocolatey-os-dependency.extension no está instalado, adoptarlo ignorado
+[INFO]     chocolatey-windowsupdate.extension adoptado sin cambio de versión (v1.0.5)
+[INFO]     dontsleep no está instalado, adoptarlo ignorado
+[INFO]     dontsleep.install no está instalado, adoptarlo ignorado
+[INFO]     foxitreader no está instalado, adoptarlo ignorado
+[INFO]     spotify no está instalado, adoptarlo ignorado
+[INFO]   Fase 7: Ajustando pins...
+[INFO]   Fase 8: Saltando actualización - lock local: última hace 0.9d, frecuencia=1 días. (C:\ProgramData\pswm-reborn\choco_update_lock.json)
+[INFO]   Resultado choco: OK
+[OK] Configuración Chocolatey procesada
+[INFO] Paso 4/5: Sincronizando inventario Chocolatey...
+[INFO]   [choco outdated] Usando caché (-1.8h de antigüedad, límite 16h). Archivo: C:\ProgramData\pswm-reborn\choco_outdated_cache.json
+[INFO] Inventario choco sincronizado: 29 paquetes (21 gestionados)
+[INFO] Paso 5/5: Comprobando actualizaciones...
+[INFO] Version actual: 2026.03.12.03474
+[INFO] Actualizacion disponible (modo upgrade): v2026.3.13.2081
+[INFO] Descargando actualizacion...
+[ERROR] SHA256 no coincide! Esperado: 2e4eb2e642cc0f22e08faa24156d49a6f68dad7eb6041ad02e7338a3aac664d7, Obtenido: 5fcc28eea35319e9fd2f9e970ae19d5e634e5c39ba6fec7aa28c5f1187674d8e
+[INFO] pswm_updater.exe ya esta sincronizado (v2026.03.12.03474)
+[INFO] Paso 6: Re-generando facts (post-iteracion)...
+[OK] Facts post-iteracion enviados: 22 registros
+[OK]     Fact script post-iter actualizado: get_bitlocker
+[OK]     Fact script post-iter actualizado: get_services
+[OK] === Iteracion completada en 1m 1seg ===
+PS C:\Program Files\pswm-reborn>
+----
+# Corregido: el endpoint GET /api/updates/download ahora usa req.agentId (del JWT via agentAuthMiddleware) para comprobar si el agente está en el grupo beta. Si está en beta y beta_update_mode != 'disabled', sirve la versión con beta_published=1. Si no, cae al canal estable (published=1). Así el SHA256 que devuelve /check y el binario de /download siempre corresponden al mismo canal.
