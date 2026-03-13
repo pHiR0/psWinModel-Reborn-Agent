@@ -303,3 +303,29 @@ https://pswm-server.phiro.es/agent/pswm.exe" , pues quiero que junto a la casill
 + Cuando pulso sobre la pestaña "Beta" dentro de "Versiones de Agente" se abre automaticamente el selector de grupos predeterminados, sin posibilidad de cerrarlo.
 > El selector de grupos solo debe abrirse para seleccionar un grupo cuando quiero elegir o cambiar el grupo que recibirá la version beta.
 + Cuando hago click sobre un badge de un "DESPLIEGUE DE CHOCOLATEY ACTIVO" en la pestaña "Packages" de un agente, abre la vista "Despliegues de Chocolatey"  , con el campo de búsqueda rellenado con id:<id del despliegue> per no se muestra nada en la lista como si no lo encontrara, dice "No hay despliegues que coincidan"
+
++ Cuando voy a crear un despliege de choco, me sale un alert que dice Error: Internal y no lo crea
+# Corregido en src/routes/choco.js: variable groupId no estaba definida en POST /deployments. Añadido crypto.randomUUID() y packages ahora es opcional (array vacío por defecto).
++ En todos los sitios que se registra la IP está detectando la IP de la máquina que tiene instalado el cloudflared tunnel y no la real del cliente.
+> Ten en cuenta esto porque se puede dar el caso de que sean conexiones por clodflared o directas y en ambas quiero que se detecte la IP real.
+> Los sitios que ahora mismo recuerdo donde se registran las IP son los siguientes : En la ficha de cada agente, En la cola de aprobación, en mi perfil en la gestion de sesiones activas, En la pestaña de "Descargas públicas" de "Versiones de Agentes", en las gestion de sesiones activas de la gestion de usuarios.
+> Revisa por si se me queda algun otro sitio que registre la IP
+# Corregido: creado src/utils.js con getRealIp(req) que prioriza CF-Connecting-IP > X-Forwarded-For > req.ip. Aplicado en index.js (login + descarga), middleware/agent_auth.js, routes/agents.js (registro token + cola), routes/facts.js.
++ En la vista de "Todos los agentes", quiero hacer varios cambios:
+> El orden por defecto es por la columna "Ultimo Contacto" primero los mas recientes
+> Tambien quiero tener la posibilidad de ir seleccionado en cada columna para ordenar el listado por esa columna y ascentente o descendente
+> Cuando tengo seleccionado una Org / Ubicacion y refresco la pagina, quiero que preserve tanto la busqueda en el texto cmo la Org / Ubicacion
+> El selector de Ubicacion aqui, debería permitirme seleccionar tambien una organización, pero como es el "Selector de Localizaciones" no permite seleccionar una ORganización, modifica para que al menos aqui permita seleccionar si quiero solo la organización.
+> Cuando un agente está deshabilitado, y ocultarlo por defecto, ya que al desactivarlo tambien lo consideramos inactivo.
+# Implementado en agents/+page.svelte: orden por defecto last_contact DESC, cabeceras ordenables con ▲▼, filtros (texto, org, ubicación, inactivos, deshabilitados) persistidos en URL (?q=&orgId=&locId=&sortCol=&sortDir=&showDisabled=), LocationPickerModal con allowOrgOnly=true, checkbox "Mostrar deshabilitados" (ocultos por defecto). Import page de $app/stores eliminado.
++ Dentro de la ficha de agente en la pestaña "Paquetes" en la seccion Paquetes no gestionados, la columna "Fijado" va a la izquierda de la columna "Actualizacion Disponible" : El orden de seria "Paquete","Version","Actualización disponible", "Fijado"
+# Corregido en agents/[id]/+page.svelte: columnas reordenadas a Paquete | Versión | Actualización disponible | Fijado.
++ Me está pasando que me solicita el usuario y contraseña despues de estar una hora sin conectar, pero aún así me siguen apareciendo en "Mis sesiones activas" , o arreglamos para que se mantenga mas tiempo o si me vuelve a pedir credenciales que elimine la otra anterior que es inválida.
+# Corregido: JWT extendido de 12h a 7d en src/index.js. La query de sesiones activas (GET /me/sessions y GET /:id/sessions) ahora filtra revoked=0 AND expires_at>CURRENT_TIMESTAMP. Al hacer login se eliminan automáticamente las sesiones expiradas del usuario.
+
+- Quiero que cuando edito o creo una Organización no lo haga en la misma página inline,  ya que siguen apareciendo el resto de organzaciones y no es buena experiencia de usuario. Quiero una página dedicada la edicion/creación de la organición, incluso cuando estoy clonando
+> Esto tambien pasa con "Scripts de PowerShell", "Grupos", "Despliegues", "Perfiles de Chocolatey", "Despliegues de Chocolatey", "Usuarios", y quizás algun sitio mas, evitemos este comportamiento de forma general
+> Solucionalos todos
+- Cuando hay agentes en cola de espera para ser aprobados muestras un boliche rojo con la cantidad de ellos, quiero tambien que cuando se enrolen nuevos agentes de forma automática con token , muestre un boliche igual pero en color azul en "Todos los Agente"
+> Mientras esté el boliche los agentes en la vista "Gestion de Agentes" se verán con un emoji junto al nombre que indique que son nuevas incorporaciones
+> El criterio para marcarlo como visto y quitar el boliche azul te dejo que lo sugieras y lo implementes, ademas despues de implementarlo, dime 4 alternativas.
