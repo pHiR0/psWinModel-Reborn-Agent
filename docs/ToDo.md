@@ -323,9 +323,25 @@ https://pswm-server.phiro.es/agent/pswm.exe" , pues quiero que junto a la casill
 + Me está pasando que me solicita el usuario y contraseña despues de estar una hora sin conectar, pero aún así me siguen apareciendo en "Mis sesiones activas" , o arreglamos para que se mantenga mas tiempo o si me vuelve a pedir credenciales que elimine la otra anterior que es inválida.
 # Corregido: JWT extendido de 12h a 7d en src/index.js. La query de sesiones activas (GET /me/sessions y GET /:id/sessions) ahora filtra revoked=0 AND expires_at>CURRENT_TIMESTAMP. Al hacer login se eliminan automáticamente las sesiones expiradas del usuario.
 
-- Quiero que cuando edito o creo una Organización no lo haga en la misma página inline,  ya que siguen apareciendo el resto de organzaciones y no es buena experiencia de usuario. Quiero una página dedicada la edicion/creación de la organición, incluso cuando estoy clonando
++ Quiero que cuando edito o creo una Organización no lo haga en la misma página inline,  ya que siguen apareciendo el resto de organzaciones y no es buena experiencia de usuario. Quiero una página dedicada la edicion/creación de la organición, incluso cuando estoy clonando
 > Esto tambien pasa con "Scripts de PowerShell", "Grupos", "Despliegues", "Perfiles de Chocolatey", "Despliegues de Chocolatey", "Usuarios", y quizás algun sitio mas, evitemos este comportamiento de forma general
+> Implementado: páginas dedicadas new/edit para Organizaciones, Grupos, Usuarios, Scripts, Despliegues PS, Perfiles Chocolatey, Despliegues Chocolatey. Cada lista actualizada con enlaces a las páginas dedicadas. Clonado abre el formulario de nueva entrada con datos pre-rellenados vía ?clone=<id>.
 > Solucionalos todos
-- Cuando hay agentes en cola de espera para ser aprobados muestras un boliche rojo con la cantidad de ellos, quiero tambien que cuando se enrolen nuevos agentes de forma automática con token , muestre un boliche igual pero en color azul en "Todos los Agente"
++ Cuando hay agentes en cola de espera para ser aprobados muestras un boliche rojo con la cantidad de ellos, quiero tambien que cuando se enrolen nuevos agentes de forma automática con token , muestre un boliche igual pero en color azul en "Todos los Agente"
 > Mientras esté el boliche los agentes en la vista "Gestion de Agentes" se verán con un emoji junto al nombre que indique que son nuevas incorporaciones
+> Implementado: badge azul en sidebar «Todos los Agentes» con contador de agentes enrollados por token desde la última visita al listado. Badge 🆕 junto al nombre del agente en la tabla. Se considera «visto» cuando el usuario visita /agents: se actualiza localStorage.agentsLastSeen = Date.now(). Sidebar refresca el contador cada 60s (mismo intervalo que el badge rojo de cola).
 > El criterio para marcarlo como visto y quitar el boliche azul te dejo que lo sugieras y lo implementes, ademas despues de implementarlo, dime 4 alternativas.
+
++ En la actualización de paquetes de Chocolatey (Fase 8), si el paquete tiene definidos parámetros en el despliegue (action install o adopt), también hay que usar esos parámetros al ejecutar el upgrade
+> Implementado en agent-core/pswm.ps1: en el bucle de actualización de la Fase 8 se busca el paquete en $managedInstallOrAdopt y, si tiene .params, se añaden al comando "choco upgrade <pkg> -y". El log también indica los parámetros usados.
+
++ En el popup que sale al pulsar el icono de info en los paquetes de la pestaña Chocolatey de la ficha de agente, el badge que muestra el despliegue al que está sujeto el paquete debe ser clicable igual que los badges de la zona "Despliegues Chocolatey Activos", abriendo una nueva ventana con ese despliegue filtrado
+> Implementado en web-console/src/routes/(app)/agents/[id]/+page.svelte: añadido deplId a managedPkgsMap, helper getDeploymentIdForPackage, y los <span> del badge convertidos en <button> con on:click={() => window.open('/choco/deployments?q=id:${dId}', '_blank')}.
+
++ Tras los ultimos cambios, en "Despliegues de Chocolatey" y "Perfiles de Chocolatey" no carga se queda el texto "Cargando..."
+# Corregido: faltaban las funciones loadAll() y onMount() en choco/+page.svelte y choco/deployments/+page.svelte (eliminadas por el script de fix). También faltaba handleDelete en perfiles. Añadidas las tres funciones en ambos archivos.
++ Para los "choco upgrade -y" junto con $managedInstallOrAdopt que implementamos anteriormente, no te olvides tambien de añadir por defecto el parametro --no-progress , a fin de eliminar ruido de la salida de texto de los comandos.
+# Añadido --no-progress en el comando upgrade de la Fase 8 en pswm.ps1. Ahora es "upgrade $pkgName -y --no-progress [+ params si los tiene]".
++ Respecto al boliche azul que hemos implementado para resaltar que hay equipo nuevos con enrolamiento por token, quiero proponer una alternativa al visto, que sea cuando pulse explicitamente sobre el boliche azul
+> Ademas quiero que cuando pase el punto por encima cambiede color se ponga verde con un simbolo de "Marca de Verificacion" ademas haga popup un tooltip estilo viñeta, hacia la derecha que diga marcar como visto X equipos nuevos.
+# Implementado: el badge azul en el sidebar es ahora un botón interactivo. Al hacer hover → cambia a verde con ✓ y muestra tooltip tipo viñeta "Marcar como visto · X equipos nuevos". Al hacer click → llama markTokenAgentsSeen() que guarda localStorage.agentsLastSeen y resetea el contador. Ya no se marca automáticamente al visitar /agents.

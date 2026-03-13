@@ -2510,8 +2510,16 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
 
       foreach ($pkgName in $toUpdate) {
         $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
-        Write-Info "    Actualizando $pkgName..."
-        $exitCodeVal = Run-ChocoCmd -chocoExe $chocoExe -cmdArgs "upgrade $pkgName -y" `
+        $upgradeArgs = "upgrade $pkgName -y --no-progress"
+        # Si el paquete tiene parámetros definidos en el despliegue, usarlos también al actualizar
+        $managedPkg = $managedInstallOrAdopt | Where-Object { $_.package_name.ToLower() -eq $pkgName } | Select-Object -First 1
+        if ($managedPkg -and $managedPkg.params) { $upgradeArgs += " $($managedPkg.params)" }
+        if ($managedPkg -and $managedPkg.params) {
+          Write-Info "    Actualizando $pkgName (con parámetros: $($managedPkg.params))..."
+        } else {
+          Write-Info "    Actualizando $pkgName..."
+        }
+        $exitCodeVal = Run-ChocoCmd -chocoExe $chocoExe -cmdArgs $upgradeArgs `
           -serverUrl $serverUrl -agentId $agentId -packageName $pkgName -action 'upgrade' `
           -startedAt $startedAt -iterationId $iterationId
         if ($exitCodeVal -ne 0) { $hadErrors = $true }
