@@ -12,3 +12,5 @@ Ignora el contenido entero de este archivo, son anotaciones y cosas que haremos 
 - Veo que el endpoint /api/updates/download se puede llamar sin autenticar
 > Los unicos endpoints que se pueden llamar sin autenticar son los de la url pública /agent y /agent/pswm.exe
 > Tambien los endpoints usados para regitrarse ya se por cola de espera y token
+
+- Implementar banderitas de paises de origen
