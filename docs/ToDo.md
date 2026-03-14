@@ -317,4 +317,7 @@ Content-Security-Policy: La configuración de la página bloqueó la carga de un
 > Y la columna Estado del selector usamos los mismo valores que usamos en la columna estado de la vista "Todos los agentes" , a cada uno el que corresponda. En consecuencia, en el dropdown que aparece junto a la casilla de buscar, debemos introducir los valores unicos de los diferentes estados.
 + En "Versiones de Agente" en "Versioens almacenadas" ordenalas de version mayo a menor por la columna version
 + Tambien podemos poner en "Versiones almacenadas" los controles para ordenar ascente o descente por columna igual que en la vista "Todos los agentes"
-- Revisa el boliche azul porque estoy borrando la casilla token_agent_seen_at de mi usaurio y solo me aparece en el boliche el numero 1, deberían aparece el numero de agentes enrolados despues de esa fecha y como no hay fecha debería ser el total de agents
++ Revisa el boliche azul porque estoy borrando la casilla token_agent_seen_at de mi usaurio y solo me aparece en el boliche el numero 1, deberían aparece el numero de agentes enrolados despues de esa fecha y como no hay fecha debería ser el total de agents
+# No era bug: si solo hay 1 agente con registered_via='token', muestra 1 correctamente. Al borrar token_agents_seen_at muestra el total de agentes registrados por token.
++ Dentro de "Configuracion del Servidor" en "DEV - LAB" el setting "Forzar el boliche azul de nuevos agentes" ya no tiene sentido que sea un switch lo suyo es que sea un botón que borre el valor de la casilla token_agent_seen_at de mi usuario
+# Implementado: switch reemplazado por botón "Resetear boliche azul" que llama PUT /api/users/me/preferences con token_agents_seen_at vacío. Eliminada toda referencia a devLabForceBadge del layout y settings.
