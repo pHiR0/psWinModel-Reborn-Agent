@@ -315,4 +315,5 @@ Content-Security-Policy: La configuración de la página bloqueó la carga de un
 + Cuando usamos el popup de "Seleccionar Agente" en listado bajo el nombre del agente (pc) quiero que apareza igual que en la vista todos los agentes el owner y la anotacion si lo tienen designado, y que la búsqueda tambien tenga en cuenta esos valores.
 > Tambien en el selector en lugar de usar la columna "Version" usamos la columna "Ultimo Contacto"
 > Y la columna Estado del selector usamos los mismo valores que usamos en la columna estado de la vista "Todos los agentes" , a cada uno el que corresponda. En consecuencia, en el dropdown que aparece junto a la casilla de buscar, debemos introducir los valores unicos de los diferentes estados.
-- En "Versiones de Agente"
++ En "Versiones de Agente" en "Versioens almacenadas" ordenalas de version mayo a menor por la columna version
+- Tambien podemos poner en "Versiones almacenadas" los controles para ordenar ascente o descente por columna igual qe en
