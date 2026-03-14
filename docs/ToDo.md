@@ -316,4 +316,5 @@ Content-Security-Policy: La configuración de la página bloqueó la carga de un
 > Tambien en el selector en lugar de usar la columna "Version" usamos la columna "Ultimo Contacto"
 > Y la columna Estado del selector usamos los mismo valores que usamos en la columna estado de la vista "Todos los agentes" , a cada uno el que corresponda. En consecuencia, en el dropdown que aparece junto a la casilla de buscar, debemos introducir los valores unicos de los diferentes estados.
 + En "Versiones de Agente" en "Versioens almacenadas" ordenalas de version mayo a menor por la columna version
-- Tambien podemos poner en "Versiones almacenadas" los controles para ordenar ascente o descente por columna igual qe en
++ Tambien podemos poner en "Versiones almacenadas" los controles para ordenar ascente o descente por columna igual que en la vista "Todos los agentes"
+- Revisa el boliche azul porque estoy borrando la casilla token_agent_seen_at de mi usaurio y solo me aparece en el boliche el numero 1, deberían aparece el numero de agentes enrolados despues de esa fecha y como no hay fecha debería ser el total de agents
