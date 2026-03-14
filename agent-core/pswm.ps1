@@ -2146,14 +2146,13 @@ function Get-ChocoFeatures([string]$chocoExe) {
   return $result
 }
 
-function Get-ChocoOutdated([string]$chocoExe) {
+function Get-ChocoOutdated([string]$chocoExe, [double]$cacheMaxHours = 16) {
   <#
   .SYNOPSIS
     Devuelve hashtable: nombre -> available_version.
-    Limita la llamada a choco.org a un máximo de 1 vez cada 16 horas.
+    Limita la llamada a choco.org según $cacheMaxHours.
     El resultado se cachea en $script:ChocoOutdatedCachePath.
   #>
-  $cacheMaxHours = 16
   $cachePath = $script:ChocoOutdatedCachePath
 
   # Verificar si existe caché válida
@@ -2457,57 +2456,76 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
     }
   }
 
-  # ── Fase 8: Actualización (si frecuencia lo permite) ──
-  if ($profile -and $profile.update_mode -ne 'disabled') {
-    $shouldUpdate = $true
-    $freqDays = $profile.upgrade_frequency_days
-    $localLockPath = $script:ChocoUpdateLockPath
-    if ($freqDays -and $freqDays -gt 0) {
-      if (Test-Path $localLockPath) {
-        # Lock local EXISTS → usarlo como referencia de última actualización
-        try {
-          $lockData = Get-Content $localLockPath -Raw -ErrorAction Stop | ConvertFrom-Json
-          if ($lockData.timestamp) {
-            $lastUpdate = [DateTime]::Parse($lockData.timestamp)
-            $daysSince = ([DateTime]::UtcNow - $lastUpdate).TotalDays
-            if ($daysSince -lt $freqDays) {
-              Write-Info "  Fase 8: Saltando actualización — lock local: última hace $([Math]::Round($daysSince,1))d, frecuencia=$freqDays días. ($localLockPath)"
-              $shouldUpdate = $false
-            }
-          }
-        } catch { Write-Info "  Lock local de actualización inválido, procediendo con actualización" }
+  # ── Fase 8: Consultar outdated (según frecuencia) y actualizar paquetes (cada iteración) ──
+  # La frecuencia limita SOLO la ejecución de 'choco outdated -r', no los upgrades.
+  # Los upgrades se intentan en cada iteración basándose en choco_outdated_cache.json.
+  $freqDays = $profile.upgrade_frequency_days
+  if ($freqDays -and $freqDays -ge 1) {
+    $outdatedCacheHours = [double]$freqDays * 24
+  } else {
+    $outdatedCacheHours = 12
+  }
+
+  Write-Info "  Fase 8: Consultando paquetes desactualizados (caché máx ${outdatedCacheHours}h, modo: $($profile.update_mode))..."
+  $outdated = Get-ChocoOutdated -chocoExe $chocoExe -cacheMaxHours $outdatedCacheHours
+  $pinnedPkgs = Get-ChocoPinnedPackages -chocoExe $chocoExe
+
+  if ($profile.update_mode -eq 'disabled') {
+    if ($outdated.Count -gt 0) {
+      Write-Info "  Fase 8: Modo deshabilitado — $($outdated.Count) paquete(s) con actualización disponible (no se actualizan)"
+    } else {
+      Write-Info "  Fase 8: Modo deshabilitado — todos los paquetes están al día"
+    }
+  } else {
+    # Refrescar versiones instaladas para comparar con el caché de outdated
+    $installedNow = Get-ChocoInstalledPackages -chocoExe $chocoExe
+
+    # Construir lista de paquetes actualizables: solo aquellos en cache outdated cuya versión instalada actual < disponible
+    $toUpdateManaged = @()
+    $toUpdateUnmanaged = @()
+    foreach ($pkgName in $outdated.Keys) {
+      $isPinned = $pinnedPkgs.ContainsKey($pkgName)
+      if ($isPinned) {
+        Write-Info "    $pkgName está pinned, no se actualiza (v$($outdated[$pkgName]) disponible)"
+        continue
+      }
+      # Verificar si el paquete sigue necesitando actualización (versión instalada < disponible)
+      if ($installedNow.ContainsKey($pkgName)) {
+        $installedVer = $installedNow[$pkgName]
+        $availableVer = $outdated[$pkgName]
+        if ($installedVer -eq $availableVer) {
+          Write-Info "    $pkgName ya actualizado a v$installedVer, saltando"
+          continue
+        }
+      }
+      # Clasificar como gestionado o no gestionado
+      $isManaged = $false
+      foreach ($mp in $managedInstallOrAdopt) {
+        if ($mp.package_name.ToLower() -eq $pkgName) { $isManaged = $true; break }
+      }
+      if ($isManaged) {
+        $toUpdateManaged += $pkgName
       } else {
-        # Sin lock local → sin historial de actualizaciones en esta máquina, actualizar
-        Write-Info "  Fase 8: Sin lock local de actualizaciones ($localLockPath), forzando actualización"
+        $toUpdateUnmanaged += $pkgName
       }
     }
 
-    if ($shouldUpdate) {
-      Write-Info "  Fase 8: Proceso de actualización (modo: $($profile.update_mode))..."
-      $outdated = Get-ChocoOutdated -chocoExe $chocoExe
-      $pinnedPkgs = Get-ChocoPinnedPackages -chocoExe $chocoExe
-
-      $toUpdate = @()
-      foreach ($pkgName in $outdated.Keys) {
-        $isPinned = $pinnedPkgs.ContainsKey($pkgName)
-        if ($isPinned) {
-          Write-Info "    $pkgName está pinned, no se actualiza"
-          continue
-        }
-        if ($profile.update_mode -eq 'managed-only') {
-          # Solo actualizar si está en la lista de paquetes gestionados (install o adopt)
-          $isManaged = $false
-          foreach ($mp in $managedInstallOrAdopt) {
-            if ($mp.package_name.ToLower() -eq $pkgName) { $isManaged = $true; break }
-          }
-          if (-not $isManaged) {
-            Write-Info "    $pkgName no es gestionado, saltando (modo managed-only)"
-            continue
-          }
-        }
-        $toUpdate += $pkgName
+    if ($profile.update_mode -eq 'managed-only') {
+      # Solo actualizar paquetes gestionados
+      if ($toUpdateUnmanaged.Count -gt 0) {
+        Write-Info "    $($toUpdateUnmanaged.Count) paquete(s) no gestionados con actualización disponible (saltados en modo managed-only)"
       }
+      $toUpdate = $toUpdateManaged
+    } else {
+      # upgrade-all: primero gestionados, luego no gestionados
+      $toUpdate = $toUpdateManaged + $toUpdateUnmanaged
+    }
 
+    if ($toUpdate.Count -eq 0) {
+      Write-Info "  Fase 8: No hay paquetes que actualizar en esta iteración"
+    } else {
+      Write-Info "  Fase 8: Actualizando $($toUpdate.Count) paquete(s)..."
+      $anyUpgraded = $false
       foreach ($pkgName in $toUpdate) {
         $startedAt = Get-Date -Format 'yyyy-MM-ddTHH:mm:ss'
         $upgradeArgs = "upgrade $pkgName -y --no-progress"
@@ -2522,24 +2540,20 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
         $exitCodeVal = Run-ChocoCmd -chocoExe $chocoExe -cmdArgs $upgradeArgs `
           -serverUrl $serverUrl -agentId $agentId -packageName $pkgName -action 'upgrade' `
           -startedAt $startedAt -iterationId $iterationId
-        if ($exitCodeVal -ne 0) { $hadErrors = $true }
+        if ($exitCodeVal -ne 0) { $hadErrors = $true } else { $anyUpgraded = $true }
       }
 
-      # Marcar timestamp de última actualización (servidor + lock local)
-      $updateTs = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')
-      try {
-        $body = @{ timestamp = $updateTs } | ConvertTo-Json -Compress
-        Invoke-AgentRestMethod -Uri "$serverUrl/api/choco/resolved/$agentId/mark-update" -Method Post -Body $body | Out-Null
-      } catch {
-        if ("$_" -match "^EXIT:\d+$") { throw }
-        Write-Info "    Error marcando timestamp de actualización en servidor: $_"
+      # Marcar timestamp de última actualización en servidor (solo si hubo algún upgrade exitoso)
+      if ($anyUpgraded) {
+        $updateTs = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ')
+        try {
+          $body = @{ timestamp = $updateTs } | ConvertTo-Json -Compress
+          Invoke-AgentRestMethod -Uri "$serverUrl/api/choco/resolved/$agentId/mark-update" -Method Post -Body $body | Out-Null
+        } catch {
+          if ("$_" -match "^EXIT:\d+$") { throw }
+          Write-Info "    Error marcando timestamp de actualización en servidor: $_"
+        }
       }
-      # Escribir lock local de actualización
-      try {
-        $lockObj = @{ timestamp = $updateTs; started_at = $updateTs } | ConvertTo-Json -Compress
-        $lockObj | Set-Content -Path $script:ChocoUpdateLockPath -Encoding UTF8 -Force
-        Write-Info "    Lock local de actualización escrito en: $($script:ChocoUpdateLockPath)"
-      } catch { Write-Info "    Error escribiendo lock local: $_" }
     }
   }
 
@@ -3799,7 +3813,7 @@ function Invoke-ResetTimersLock {
   .SYNOPSIS
     Elimina la caché de 'choco outdated -r' y el lock local de última actualización Chocolatey.
     Esto fuerza que en la próxima iteración se vuelva a ejecutar 'choco outdated -r'
-    y también se ejecute el proceso de actualización (ignorando la frecuencia configurada).
+    (la caché controla la frecuencia de consulta de paquetes desactualizados).
   #>
   Write-Host ""
   Write-Host "=== reset_timers_lock ===" -ForegroundColor Cyan
