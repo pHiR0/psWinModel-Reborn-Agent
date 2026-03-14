@@ -2679,11 +2679,13 @@ function Sync-ChocoInventory([string]$serverUrl, [int]$agentId, [object]$resolve
     $packages = @()
     foreach ($pkgName in $installed.Keys) {
       $managedInfo = $managedLookup[$pkgName]
+      # Solo marcar available_version si realmente difiere de la versión instalada
+      $availVer = if ($outdated.ContainsKey($pkgName) -and $outdated[$pkgName] -ne $installed[$pkgName]) { $outdated[$pkgName] } else { $null }
       $packages += @{
         name              = $pkgName
         version           = $installed[$pkgName]
         pinned            = if ($pinned.ContainsKey($pkgName)) { $true } else { $false }
-        available_version = if ($outdated.ContainsKey($pkgName)) { $outdated[$pkgName] } else { $null }
+        available_version = $availVer
         managed           = if ($managedInfo) { $true } else { $false }
         deploy_params     = if ($managedInfo) { $managedInfo.params } else { $null }
         deploy_action     = if ($managedInfo) { $managedInfo.action } else { $null }
