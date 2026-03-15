@@ -343,11 +343,12 @@ Content-Security-Policy: La configuración de la página bloqueó la carga de un
 > Agentes
 > * Ese tambien es el orden de arriba abajo de las categorías. Si no hay integrantes de alguna categoría, no muestres la categoría.
 # Implementado: ambas listas (Choco y PS) ahora ordenan por target_type (Todos→Organizaciones→Localizaciones→Grupos→Agentes) e insertan cabeceras de sección entre cada categoría. Las categorías sin despliegues no se muestran.
-- En la "Configuración del sistema"  quiero que añadamos una nueva pesta que va a ser para definir la configuracion de los agentes. La idea es poder desplegar configuraciones para los agentes desde la consola.
++ En la "Configuración del sistema"  quiero que añadamos una nueva pesta que va a ser para definir la configuracion de los agentes. La idea es poder desplegar configuraciones para los agentes desde la consola.
 > La primera configuración que quiero desplegar es el tiempo de espera entre iteraciones de los agentes, que ahora mismo la tenemos definida en 90 minutos.
 > Tendrás que editar tambien en el agente pswm para que interprete y almacene esta configuración.
 > Si el pswm va a consultar una configuración concreta y no está establecida cogerá un valor por defecto hardcodeado, para esta primera el valor por defecto hardcodeado es 90 minutos.
 > Tambien quiero en los facts (built-in) que reporta pswm en los del agente añada tambien un nuevo nodo con todas las configuraciones que le aplica.
+# Implementado: nueva pestaña "Agentes" en Configuración del sistema con slider para intervalo de iteraciones (1-1440 min, default 90). Nuevo endpoint GET /api/settings/agent-config con autenticación dual (usuario/agente). En pswm.ps1: función Get-AgentConfig que consulta al servidor y cachea en agent_config.json; el servicio C# y el modo interactivo leen el intervalo desde el cache antes de cada sleep. Nuevo fact built-in agent_config que reporta la configuración aplicada.
 - Dentro del SideMenu, en "Automatización" renombra "Despliegues" como "Despliegues PowerShell"
 - Tambien me gustaría que añadieras los controles para poder ordenar de forma ascendente/descente por columna de todas (igual que lo que usamos en la vista "todos los clientes") a cada una de estas vistas:
 > "Cola de Aprobación y Tokens"

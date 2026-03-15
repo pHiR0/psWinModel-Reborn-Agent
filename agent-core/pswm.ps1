@@ -466,6 +466,33 @@ function Invoke-AgentWebRequest {
 
 #endregion Agent JWT RS256
 
+#region Agent Config
+
+function Get-AgentConfig {
+  param([string]$serverUrl, [int]$agentId)
+  $configDir = "$env:ProgramData\pswm-reborn"
+  $configFile = Join-Path $configDir 'agent_config.json'
+  try {
+    $result = Invoke-AgentRestMethod -Uri "$serverUrl/api/settings/agent-config" -Method Get
+    if ($result -and $result.config) {
+      if (-not (Test-Path $configDir)) { New-Item -ItemType Directory -Path $configDir -Force | Out-Null }
+      $result.config | ConvertTo-Json -Depth 5 | Set-Content -Path $configFile -Force -Encoding UTF8
+      return $result.config
+    }
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "[AgentConfig] Error consultando config del servidor: $_ (usando cache local)"
+  }
+  # Fallback: cache local
+  if (Test-Path $configFile) {
+    try { return (Get-Content $configFile -Raw | ConvertFrom-Json) } catch {}
+  }
+  # Default hardcodeado
+  return [PSCustomObject]@{ iteration_interval_minutes = 90 }
+}
+
+#endregion Agent Config
+
 #region Time Sync
 
 function Invoke-TimeSync([string]$serverUrl, [int]$agentId) {
@@ -1220,6 +1247,24 @@ public class PswmService : ServiceBase {
         Log("SERVICE STOP completed");
     }
 
+    private int GetConfigInterval() {
+        try {
+            string configFile = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "pswm-reborn", "agent_config.json");
+            if (File.Exists(configFile)) {
+                string json = File.ReadAllText(configFile);
+                var match = System.Text.RegularExpressions.Regex.Match(
+                    json, @"""iteration_interval_minutes""\s*:\s*(\d+)");
+                if (match.Success) {
+                    int minutes = int.Parse(match.Groups[1].Value);
+                    if (minutes >= 1 && minutes <= 1440) return minutes * 60;
+                }
+            }
+        } catch { }
+        return _intervalSec;
+    }
+
     private void WorkerLoop() {
         string pswmExe = Path.Combine(_exeDir, "pswm.exe");
         while (!_stopRequested) {
@@ -1244,8 +1289,10 @@ public class PswmService : ServiceBase {
             } catch (Exception ex) {
                 Log("ERROR: " + ex.Message);
             }
-            // Sleep in 1-second ticks so we can react to stop requests quickly
-            for (int i = 0; i < _intervalSec && !_stopRequested; i++) {
+            // Read interval from config (updated by iterate) or use default
+            int sleepSec = GetConfigInterval();
+            Log("Esperando " + (sleepSec / 60) + " minutos...");
+            for (int i = 0; i < sleepSec && !_stopRequested; i++) {
                 Thread.Sleep(1000);
             }
         }
@@ -1302,7 +1349,7 @@ public class PswmService : ServiceBase {
 
     Write-Info "Directorio: $myDir"
     Write-Info "Comando: pswm.exe $cmd"
-    Write-Info "Intervalo: $($script:SvcIntervalMinutes) minutos"
+    Write-Info "Intervalo por defecto: $($script:SvcIntervalMinutes) minutos (se actualizará desde config del servidor)"
 
     while ($true) {
       $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
@@ -1314,8 +1361,19 @@ public class PswmService : ServiceBase {
         if ("$_" -match "^EXIT:\d+$") { throw }
         Write-Err "Error ejecutando pswm.exe: $_"
       }
-      Write-Info "Esperando $($script:SvcIntervalMinutes) minutos..."
-      Start-Sleep -Seconds $intervalSec
+      # Read interval from config file (updated by iterate) or use default
+      $cfgIntervalMin = $script:SvcIntervalMinutes
+      $cfgFile = Join-Path "$env:ProgramData\pswm-reborn" 'agent_config.json'
+      if (Test-Path $cfgFile) {
+        try {
+          $cfgJson = Get-Content $cfgFile -Raw | ConvertFrom-Json
+          if ($cfgJson.iteration_interval_minutes -ge 1 -and $cfgJson.iteration_interval_minutes -le 1440) {
+            $cfgIntervalMin = [int]$cfgJson.iteration_interval_minutes
+          }
+        } catch {}
+      }
+      Write-Info "Esperando $cfgIntervalMin minutos..."
+      Start-Sleep -Seconds ($cfgIntervalMin * 60)
     }
   }
 }
@@ -1867,6 +1925,11 @@ function Collect-Facts {
     }
   } catch {
     $facts += @{ fact_key = 'chocolatey'; value = '{"installed": false, "error": "' + "$_".Replace('"','\"') + '"}'; source = 'agent' }
+  }
+
+  # --- Agent config (configuración aplicada desde el servidor) ---
+  if ($script:AgentServerConfig) {
+    $facts += @{ fact_key = 'agent_config'; value = ($script:AgentServerConfig | ConvertTo-Json -Compress -Depth 5); source = 'agent' }
   }
 
   # --- External facts (scripts .ps1 en external_facts/) ---
@@ -3217,6 +3280,17 @@ function Invoke-Iterate {
   }
 
   Start-AgentIteration -serverUrl $srvUrl -agentId $agentId -iterationId $script:IterationId
+
+  # ---- PRE-PASO: Consultar configuración del servidor ----
+  try {
+    $script:AgentServerConfig = Get-AgentConfig -serverUrl $srvUrl -agentId $agentId
+    $cfgInterval = $script:AgentServerConfig.iteration_interval_minutes
+    Write-Success "Config del servidor obtenida (intervalo: ${cfgInterval} min)"
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Info "Error consultando config del servidor: $_ (continuando con defaults)"
+    $script:AgentServerConfig = [PSCustomObject]@{ iteration_interval_minutes = 90 }
+  }
 
   # ---- PASO 1: Facts ----
   Write-Info "Paso 1/4: Recopilando y enviando facts..."
