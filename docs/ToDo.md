@@ -349,7 +349,8 @@ Content-Security-Policy: La configuración de la página bloqueó la carga de un
 > Si el pswm va a consultar una configuración concreta y no está establecida cogerá un valor por defecto hardcodeado, para esta primera el valor por defecto hardcodeado es 90 minutos.
 > Tambien quiero en los facts (built-in) que reporta pswm en los del agente añada tambien un nuevo nodo con todas las configuraciones que le aplica.
 # Implementado: nueva pestaña "Agentes" en Configuración del sistema con slider para intervalo de iteraciones (1-1440 min, default 90). Nuevo endpoint GET /api/settings/agent-config con autenticación dual (usuario/agente). En pswm.ps1: función Get-AgentConfig que consulta al servidor y cachea en agent_config.json; el servicio C# y el modo interactivo leen el intervalo desde el cache antes de cada sleep. Nuevo fact built-in agent_config que reporta la configuración aplicada.
-- Dentro del SideMenu, en "Automatización" renombra "Despliegues" como "Despliegues PowerShell"
++ Dentro del SideMenu, en "Automatización" renombra "Despliegues" como "Despliegues PowerShell"
+# Implementado: label del menú lateral cambiado de "Despliegues" a "Despliegues PowerShell" en +layout.svelte.
 - Tambien me gustaría que añadieras los controles para poder ordenar de forma ascendente/descente por columna de todas (igual que lo que usamos en la vista "todos los clientes") a cada una de estas vistas:
 > "Cola de Aprobación y Tokens"
 > "Tokens de registro"
