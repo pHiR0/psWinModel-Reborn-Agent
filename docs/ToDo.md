@@ -335,13 +335,14 @@ Content-Security-Policy: La configuración de la página bloqueó la carga de un
 + He creado un "Despliegue de Choco" con obejtivo "Grupos", y he asignado mi máquina a uso de esos grupos. Los paquetes que he puesto en ese despliegue básicamente es sl Skype en modo uninstall. Cuando voy a la pestaña de los detalles de agente de mi equipo, luego a Packages, si bien arriba en "Despliegues de Chocolatey Activos" veo el nombre del despliegue, luego abajo en la lista de packages el skype me aparece en la zona de No gestionados, y entidiendo que debería aparecer en la zona de gestionados, y con el icono de de la cesta basura indicando que en la siguiente iteracion se desinstalará este paquete.
 > Tambien he comprobado iterando "pswm iterate" que efectivamente no lo desinstala.
 # Corregido: causa raíz era que los paquetes del despliegue habían desaparecido de la tabla choco_deployment_packages. El endpoint PUT /api/choco/deployments/:id borraba incondicionalmente los paquetes existentes antes de reinsertar; si el campo packages no venía en el body (undefined) los paquetes se perdían permanentemente. Fix: ahora solo se borran y reinsertan los paquetes cuando packages es explícitamente un Array. Datos restaurados manualmente en la DB.
-- El listado de "Despliegues de Chocolatey" y tambien el de "Despliegues" de powershell me gustaría que estuvieran agrupados segun el tipo que son los siguientes:
++ El listado de "Despliegues de Chocolatey" y tambien el de "Despliegues" de powershell me gustaría que estuvieran agrupados segun el tipo que son los siguientes:
 > Todos
 > Organizaciones
 > Localizaciones
 > Grupos
 > Agentes
 > * Ese tambien es el orden de arriba abajo de las categorías. Si no hay integrantes de alguna categoría, no muestres la categoría.
+# Implementado: ambas listas (Choco y PS) ahora ordenan por target_type (Todos→Organizaciones→Localizaciones→Grupos→Agentes) e insertan cabeceras de sección entre cada categoría. Las categorías sin despliegues no se muestran.
 - En la "Configuración del sistema"  quiero que añadamos una nueva pesta que va a ser para definir la configuracion de los agentes. La idea es poder desplegar configuraciones para los agentes desde la consola.
 > La primera configuración que quiero desplegar es el tiempo de espera entre iteraciones de los agentes, que ahora mismo la tenemos definida en 90 minutos.
 > Tendrás que editar tambien en el agente pswm para que interprete y almacene esta configuración.
