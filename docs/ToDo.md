@@ -364,3 +364,5 @@ Content-Security-Policy: La configuración de la página bloqueó la carga de un
 # Implementado: cabeceras ordenables (▲/▼/⇅) en las 9 vistas. Patrón sortCol/sortDir/toggleSort con indicadores visuales. En despliegues PS y Choco se respeta la agrupación por categoría (TYPE_ORDER) como primer criterio de ordenación. En Cola se ordenan ID, Hostname, IP, Método, Fecha, Estado. En Tokens: Descripción, Usos, Caduca, Estado. Descargas: Versión, IP, User-Agent, Fecha.
 + En "Editar Agente" añade una sección para agregar o quitar etiquetas, usando el mismo metodo y similar interfaz qu usamos para gregar o quitar grupos
 # Implementado: nueva sección "Etiquetas" en la página de edición del agente, debajo de "Grupos". Usa TagPickerModal.svelte (estilo amber/🏷️) para seleccionar tags disponibles. Badges amber con ✕ para quitar. En save() se hace diff de tags actuales vs seleccionados llamando agentsApi.tags.add() / agentsApi.tags.remove(). Carga tags existentes del agente en init().
+
+-  el "pswm view_config" tambien debería mostrar la agent_config y los hashes de los .pem
