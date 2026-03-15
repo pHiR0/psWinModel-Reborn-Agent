@@ -1053,14 +1053,30 @@ function Invoke-RestoreConfig([string]$Name) {
     Exit-Cmd 1
   }
 
-  # Ensure target dir has no config or keys
+  # Ensure target dir has no config or keys (salvo --force)
   $confExists = Test-Path (Join-Path $OutDir 'config.json')
   $pubExists = Test-Path (Join-Path $OutDir 'agent_public.pem')
   $privExists = Test-Path (Join-Path $OutDir 'agent_private.pem')
-  if ($confExists -or $pubExists -or $privExists) {
+  if (($confExists -or $pubExists -or $privExists) -and -not $script:Force) {
     Write-Err "Hay archivos de configuraciÃ³n o certificados existentes en $OutDir. Abortar restauraciÃ³n."
     Write-Host "Archivos detectados: $(@(if ($confExists) { 'config.json' } else { }), (if ($pubExists) { 'agent_public.pem' } else { }), (if ($privExists) { 'agent_private.pem' } else { }) )" -ForegroundColor Yellow
+    Write-Host "Usa --force para sobreescribir (se creara backup _autosave)." -ForegroundColor Yellow
     Exit-Cmd 1
+  }
+
+  # --force: hacer backup _autosave de archivos existentes antes de sobreescribir
+  if ($script:Force -and ($confExists -or $pubExists -or $privExists)) {
+    $autosaveDir = Join-Path $archiveDir '_autosave'
+    if (Test-Path $autosaveDir) { Remove-Item -Path $autosaveDir -Recurse -Force }
+    New-Item -ItemType Directory -Path $autosaveDir -Force | Out-Null
+    foreach ($fname in @('config.json', 'agent_public.pem', 'agent_private.pem')) {
+      $src = Join-Path $OutDir $fname
+      if (Test-Path $src) {
+        Copy-Item -Path $src -Destination (Join-Path $autosaveDir $fname) -Force
+        Write-Warning "Backup _autosave: $fname"
+      }
+    }
+    Write-Info "Backup _autosave creado en: $autosaveDir"
   }
 
   # Locate zip
@@ -3896,6 +3912,7 @@ Comandos disponibles:
   view_config         Mostrar configuracion actual (config.json)
   archive_config      Archivar config + claves a ZIP y eliminar originales
   restore_config      Restaurar config desde ZIP (solo si no existen archivos locales)
+                      Opcion: --force  Sobreescribe archivos existentes (crea backup _autosave)
   gencert             Generar/regenerar par de claves RSA
   install             Instalar agente como servicio Windows (requiere .exe y admin)
                       Configura el servicio en inicio automatico (Automatic) y lo arranca
@@ -3941,6 +3958,7 @@ Ejemplos:
   pswm.exe reg_token "mi-token" -ServerUrl https://mi-servidor.com
   pswm.exe archive_config "backup-20260117"
   pswm.exe restore_config "backup-20260117"
+  pswm.exe restore_config "backup-20260117" --force
   pswm.exe check_status
   pswm.exe view_config
   pswm.exe install
