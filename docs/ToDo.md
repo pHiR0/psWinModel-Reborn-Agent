@@ -351,7 +351,7 @@ Content-Security-Policy: La configuración de la página bloqueó la carga de un
 # Implementado: nueva pestaña "Agentes" en Configuración del sistema con slider para intervalo de iteraciones (1-1440 min, default 90). Nuevo endpoint GET /api/settings/agent-config con autenticación dual (usuario/agente). En pswm.ps1: función Get-AgentConfig que consulta al servidor y cachea en agent_config.json; el servicio C# y el modo interactivo leen el intervalo desde el cache antes de cada sleep. Nuevo fact built-in agent_config que reporta la configuración aplicada.
 + Dentro del SideMenu, en "Automatización" renombra "Despliegues" como "Despliegues PowerShell"
 # Implementado: label del menú lateral cambiado de "Despliegues" a "Despliegues PowerShell" en +layout.svelte.
-- Tambien me gustaría que añadieras los controles para poder ordenar de forma ascendente/descente por columna de todas (igual que lo que usamos en la vista "todos los clientes") a cada una de estas vistas:
++ Tambien me gustaría que añadieras los controles para poder ordenar de forma ascendente/descente por columna de todas (igual que lo que usamos en la vista "todos los clientes") a cada una de estas vistas:
 > "Cola de Aprobación y Tokens"
 > "Tokens de registro"
 > "Etiquetas"
@@ -361,4 +361,5 @@ Content-Security-Policy: La configuración de la página bloqueó la carga de un
 > "Despliegues de Choco" -> Aqui respeta la agrupacion por categoría/tipo
 > "Descargas Públicas de pswm.exe"
 > "Usuarios"
+# Implementado: cabeceras ordenables (▲/▼/⇅) en las 9 vistas. Patrón sortCol/sortDir/toggleSort con indicadores visuales. En despliegues PS y Choco se respeta la agrupación por categoría (TYPE_ORDER) como primer criterio de ordenación. En Cola se ordenan ID, Hostname, IP, Método, Fecha, Estado. En Tokens: Descripción, Usos, Caduca, Estado. Descargas: Versión, IP, User-Agent, Fecha.
 - En "Editar Agente" añade una sección para agregar o quitar etiquetas, usando el mismo metodo y similar interfaz qu usamos para gregar o quitar grupos
