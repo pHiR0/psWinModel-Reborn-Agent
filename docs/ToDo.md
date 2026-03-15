@@ -321,3 +321,37 @@ Content-Security-Policy: La configuración de la página bloqueó la carga de un
 # No era bug: si solo hay 1 agente con registered_via='token', muestra 1 correctamente. Al borrar token_agents_seen_at muestra el total de agentes registrados por token.
 + Dentro de "Configuracion del Servidor" en "DEV - LAB" el setting "Forzar el boliche azul de nuevos agentes" ya no tiene sentido que sea un switch lo suyo es que sea un botón que borre el valor de la casilla token_agent_seen_at de mi usuario
 # Implementado: switch reemplazado por botón "Resetear boliche azul" que llama PUT /api/users/me/preferences con token_agents_seen_at vacío. Eliminada toda referencia a devLabForceBadge del layout y settings.
+
++ Las fechas que pusimos anteriormente  para indicar si la version del pswm era superior (Flecha Arriba Azul) o inferior (Fecha Abajo Roja) a la estable, son muy pequeñas, quiero que sean un poco mas visibles mas bolded, quizás un poco mas grande pero sin sobrepasar el tamaño de letra la propia version, simplemente quiero que sean visibles comodamente a la vista.
+> Además me gustaría que esos casos el tipo de letra donde dice la version para las que sean superior o inferior a la estable, apareza en tipo cursiva
+# Implementado: flechas cambiadas de text-sm a text-base font-bold en ambas vistas (lista y detalle). Versión en cursiva (italic) cuando difiere de la estable.
+- Se me da el caso de que un agente ha actualizado la version del pswm, pero finaliza la iteración y en los "Detalles del Agente" si apareciendo que tiene la version anterior. En la ultima fase del pswm quiero que tambien envíe la información de la version ya actualizada.
+- Al pswm para la accion restore_config agregale el parametro --force que quiere decir que lo restaure auque haya archivos o certificados existente, y los sobrescriba, eso si que muestren los warnings de que ha sido sobreescrito.
+> Por si acaso si existe una config anterior, antes de sobreescribirlo salvas la existente con el nombre _autosave , eso si, si ya hay otro _autosave este si lo sobreescribimo sin contemplacion.
+- Dentro de "Iteraciones en ejecuciones de scripts, en la columna detalles tenemos puesto un icono de un ojo (tachado/sin tachar segun estado) para que deslplieuge el stdout y stderr de la iteracion de objeto de forma inline, una vez desplegada tenemos en donde aparece el texto del stdout/sterr arriba a la derecha un icono con flechas que su tootltip es "Ampliar" y lo que hace es abrir un popup  con todo el stdout run. Bien quiero quitar el icono de ojo que lo muestra inline (ya no lo veremos inline) y poner el icono de ampliar, y que se abra el popup ya implementado.
+- He creado un "Despliegue de Choco" con obejtivo "Grupos", y he asignado mi máquina a uso de esos grupos. Los paquetes que he puesto en ese despliegue básicamente es sl Skype en modo uninstall. Cuando voy a la pestaña de los detalles de agente de mi equipo, luego a Packages, si bien arriba en "Despliegues de Chocolatey Activos" veo el nombre del despliegue, luego abajo en la lista de packages el skype me aparece en la zona de No gestionados, y entidiendo que debería aparecer en la zona de gestionados, y con el icono de de la cesta basura indicando que en la siguiente iteracion se desinstalará este paquete.
+> Tambien he comprobado iterando "pswm iterate" que efectivamente no lo desinstala.
+- El listado de "Despliegues de Chocolatey" y tambien el de "Despliegues" de powershell me gustaría que estuvieran agrupados segun el tipo que son los siguientes:
+> Todos
+> Organizaciones
+> Localizaciones
+> Grupos
+> Agentes
+> * Ese tambien es el orden de arriba abajo de las categorías. Si no hay integrantes de alguna categoría, no muestres la categoría.
+- En la "Configuración del sistema"  quiero que añadamos una nueva pesta que va a ser para definir la configuracion de los agentes. La idea es poder desplegar configuraciones para los agentes desde la consola.
+> La primera configuración que quiero desplegar es el tiempo de espera entre iteraciones de los agentes, que ahora mismo la tenemos definida en 90 minutos.
+> Tendrás que editar tambien en el agente pswm para que interprete y almacene esta configuración.
+> Si el pswm va a consultar una configuración concreta y no está establecida cogerá un valor por defecto hardcodeado, para esta primera el valor por defecto hardcodeado es 90 minutos.
+> Tambien quiero en los facts (built-in) que reporta pswm en los del agente añada tambien un nuevo nodo con todas las configuraciones que le aplica.
+- Dentro del SideMenu, en "Automatización" renombra "Despliegues" como "Despliegues PowerShell"
+- Tambien me gustaría que añadieras los controles para poder ordenar de forma ascendente/descente por columna de todas (igual que lo que usamos en la vista "todos los clientes") a cada una de estas vistas:
+> "Cola de Aprobación y Tokens"
+> "Tokens de registro"
+> "Etiquetas"
+> "Scripts de PowerShell"
+> "Despliegues de Powershell" -> Aqui respeta la agrupacion por categoría/tipo
+> "Perfiles de Chocolatey"
+> "Despliegues de Choco" -> Aqui respeta la agrupacion por categoría/tipo
+> "Descargas Públicas de pswm.exe"
+> "Usuarios"
+- En "Editar Agente" añade una sección para agregar o quitar etiquetas, usando el mismo metodo y similar interfaz qu usamos para gregar o quitar grupos
