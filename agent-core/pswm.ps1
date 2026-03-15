@@ -1767,6 +1767,15 @@ function Collect-Facts {
   }
   $facts += @{ fact_key = 'agent_version'; value = $agentVer; source = 'agent' }
 
+  # Si hay una actualizacion pendiente (updater lanzado este ciclo), usar la version destino
+  if ($script:PendingUpdateVersion) {
+    $facts = @($facts | ForEach-Object {
+      if ($_.fact_key -eq 'agent_version') {
+        @{ fact_key = 'agent_version'; value = $script:PendingUpdateVersion; source = 'agent' }
+      } else { $_ }
+    })
+  }
+
   # --- Tamaño y hash del pswm.exe (solo en modo compilado) ---
   if (Test-IsCompiled) {
     try {
@@ -2832,6 +2841,8 @@ function Invoke-CheckAndApplyUpdate([string]$serverUrl, [int]$agentId = 0, [stri
     $psi.WindowStyle = 'Hidden'
     [System.Diagnostics.Process]::Start($psi) | Out-Null
     Write-Success "Updater lanzado. La actualizacion se aplicara en breve."
+    # Guardar la version destino para que Collect-Facts (Paso 6) la envie al servidor
+    $script:PendingUpdateVersion = $serverVersion
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
     Write-Err "Error lanzando updater: $_"
@@ -3089,6 +3100,8 @@ function Invoke-Iterate {
 
   # Flag para rastrear si la iteracion tuvo errores
   $script:IterationHadErrors = $false
+  # Resetear flag de actualizacion pendiente (se fija en Invoke-CheckAndApplyUpdate si hay update)
+  $script:PendingUpdateVersion = $null
 
   # Validar config
   $cfg = Get-Config
