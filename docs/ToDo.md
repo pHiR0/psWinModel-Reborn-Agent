@@ -8,9 +8,11 @@ Las Líneas que empiecen por # debes ignorarlas
 
 IMPORTANTE: No te olvides de marcar en este archivo va inmplementación realizada com el símbolo +
 
-Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas mejoras o correcciones e implementalas, segun los criterios indicados anteriormente.
+No tienes que modificar el contenido, nada mas que para marcarlo como hecho. Lo que si quiero que hagas es añadir un descripcion de lo que has hecho, con detalles resumidos, bajo el punto que corresponda, comentarios que empiecen por #
 
-No tienes que modificar el contenido, nada mas que para marcarlo como hecho, si quieres puedes añadir algo bajo el punto que corresponda, comentarios que empiecen por # 
+Además quiero que cada vez que implementes una tareas o una característica, hagas un git commit , pero no hagas git push , excepto peticion expresa.
+
+Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas mejoras o correcciones e implementalas, segun los criterios indicados anteriormente.
 
 ---
 
@@ -365,4 +367,7 @@ Content-Security-Policy: La configuración de la página bloqueó la carga de un
 + En "Editar Agente" añade una sección para agregar o quitar etiquetas, usando el mismo metodo y similar interfaz qu usamos para gregar o quitar grupos
 # Implementado: nueva sección "Etiquetas" en la página de edición del agente, debajo de "Grupos". Usa TagPickerModal.svelte (estilo amber/🏷️) para seleccionar tags disponibles. Badges amber con ✕ para quitar. En save() se hace diff de tags actuales vs seleccionados llamando agentsApi.tags.add() / agentsApi.tags.remove(). Carga tags existentes del agente en init().
 
--  el "pswm view_config" tambien debería mostrar la agent_config y los hashes de los .pem
++ El "pswm view_config" tambien debería mostrar la agent_config y los hashes de los .pem
+# Implementado: Invoke-ViewConfig ampliado en pswm.ps1. Ahora muestra 3 secciones: (1) config.json como antes, (2) agent_config.json (o mensaje si no existe), (3) Hashes SHA256 de agent_public.pem y agent_private.pem (o aviso si no existen).
++ He estado revisando las iteraciones de algunos equipos y se da el caso que se intenta desinstalar y actualizar el mismo paquete en misma iteracion (adjunto captura), esto no tiene sentido , si un paquete va a ser desinstalado, no debería ni intentar actualizarse. Esto no se si lo debemos hacer server-side o pswm-side, creo que deberíamos hacerlo en ambos sides o como minimo server-side
+# Implementado: corrección en pswm.ps1 (Fase 8). Antes del bucle de upgrades se construye un hashtable $uninstallNames con los nombres en minúsculas de todos los paquetes con acción 'uninstall'. En cada iteración del bucle se comprueba si el paquete está en ese set y, si es así, se omite con log "marcado para desinstalar, se omite la actualización". Server-side no requería cambio: el endpoint /resolved ya devuelve correctamente los paquetes con action:'uninstall'; la lógica de upgrade era responsabilidad del agente.

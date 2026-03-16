@@ -1007,15 +1007,38 @@ function Invoke-CheckStatus {
 }
 
 function Invoke-ViewConfig {
-  Write-Info "ConfiguraciÃ³n actual:"
-  
+  Write-Info "Configuración actual:"
+
   if (-not (Test-Path $script:ConfigPath)) {
-    Write-Err "No se encontrÃ³ archivo de configuraciÃ³n: $script:ConfigPath"
+    Write-Err "No se encontró archivo de configuración: $script:ConfigPath"
     Exit-Cmd 1
   }
 
+  # --- config.json ---
   Write-Host "`n=== $script:ConfigPath ===" -ForegroundColor Yellow
   Get-Content -Raw -Path $script:ConfigPath | Write-Host
+
+  # --- agent_config.json ---
+  $agentConfigPath = Join-Path $OutDir 'agent_config.json'
+  Write-Host "`n=== agent_config.json ===" -ForegroundColor Yellow
+  if (Test-Path $agentConfigPath) {
+    Get-Content -Raw -Path $agentConfigPath | Write-Host
+  } else {
+    Write-Host "  (no existe — se usarán valores por defecto)" -ForegroundColor DarkGray
+  }
+
+  # --- Hashes SHA256 de certificados PEM ---
+  Write-Host "`n=== Hashes de certificados (.pem) ===" -ForegroundColor Yellow
+  foreach ($pemFile in @($script:PublicKeyPath, $script:PrivateKeyPath)) {
+    $label = Split-Path $pemFile -Leaf
+    if (Test-Path $pemFile) {
+      $sha256 = (Get-FileHash -Path $pemFile -Algorithm SHA256).Hash
+      Write-Host ("  {0,-30}  SHA256: {1}" -f $label, $sha256)
+    } else {
+      Write-Host ("  {0,-30}  (no existe)" -f $label) -ForegroundColor DarkGray
+    }
+  }
+
   Exit-Cmd 0
 }
 
@@ -2568,10 +2591,19 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
     # Refrescar versiones instaladas para comparar con el caché de outdated
     $installedNow = Get-ChocoInstalledPackages -chocoExe $chocoExe
 
+    # Conjunto de paquetes marcados para desinstalar (en minúsculas) — nunca se actualizan
+    $uninstallNames = @{}
+    foreach ($u in $uninstallPkgs) { $uninstallNames[$u.package_name.ToLower()] = $true }
+
     # Construir lista de paquetes actualizables: solo aquellos en cache outdated cuya versión instalada actual < disponible
     $toUpdateManaged = @()
     $toUpdateUnmanaged = @()
     foreach ($pkgName in $outdated.Keys) {
+      # No actualizar paquetes que están marcados para desinstalar
+      if ($uninstallNames.ContainsKey($pkgName)) {
+        Write-Info "    $pkgName marcado para desinstalar, se omite la actualización"
+        continue
+      }
       $isPinned = $pinnedPkgs.ContainsKey($pkgName)
       if ($isPinned) {
         Write-Info "    $pkgName está pinned, no se actualiza (v$($outdated[$pkgName]) disponible)"
