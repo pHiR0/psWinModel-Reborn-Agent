@@ -1232,6 +1232,7 @@ public class PswmService : ServiceBase {
     private readonly string _logFile;
     private readonly int _intervalSec = $intervalSec;
     private readonly string _command = "$cmd";
+    private Process _remoteSessionProc;
 
     public PswmService() {
         ServiceName = "$svcName";
@@ -1312,6 +1313,8 @@ public class PswmService : ServiceBase {
             } catch (Exception ex) {
                 Log("ERROR: " + ex.Message);
             }
+            // Manage remote_session process lifecycle
+            try { ManageRemoteSession(pswmExe); } catch (Exception ex) { Log("RS ERROR: " + ex.Message); }
             // Read interval from config (updated by iterate) or use default
             int sleepSec = GetConfigInterval();
             Log("Esperando " + (sleepSec / 60) + " minutos...");
@@ -1319,7 +1322,62 @@ public class PswmService : ServiceBase {
                 Thread.Sleep(1000);
             }
         }
+        // Stop remote_session on service stop
+        StopRemoteSession();
         Log("Worker loop finished");
+    }
+
+    private bool IsRemoteSessionEnabled() {
+        try {
+            string configFile = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "pswm-reborn", "agent_config.json");
+            if (File.Exists(configFile)) {
+                string json = File.ReadAllText(configFile);
+                var match = System.Text.RegularExpressions.Regex.Match(
+                    json, @"""remote_session_enabled""\s*:\s*true", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+                return match.Success;
+            }
+        } catch { }
+        return false;
+    }
+
+    private void ManageRemoteSession(string pswmExe) {
+        bool shouldRun = IsRemoteSessionEnabled();
+        bool isRunning = _remoteSessionProc != null && !_remoteSessionProc.HasExited;
+
+        if (shouldRun && !isRunning) {
+            Log("RS: Launching remote_session process");
+            try {
+                var rsPsi = new ProcessStartInfo(pswmExe, "remote_session") {
+                    WorkingDirectory = _exeDir,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                _remoteSessionProc = Process.Start(rsPsi);
+                Log("RS: Started (PID: " + (_remoteSessionProc != null ? _remoteSessionProc.Id.ToString() : "?") + ")");
+            } catch (Exception ex) {
+                Log("RS: Failed to start: " + ex.Message);
+            }
+        } else if (!shouldRun && isRunning) {
+            Log("RS: Stopping remote_session (disabled)");
+            StopRemoteSession();
+        } else if (shouldRun && isRunning) {
+            Log("RS: remote_session running (PID: " + _remoteSessionProc.Id + ")");
+        }
+    }
+
+    private void StopRemoteSession() {
+        if (_remoteSessionProc != null && !_remoteSessionProc.HasExited) {
+            try {
+                _remoteSessionProc.Kill();
+                _remoteSessionProc.WaitForExit(5000);
+                Log("RS: Process stopped");
+            } catch (Exception ex) {
+                Log("RS: Error stopping: " + ex.Message);
+            }
+        }
+        _remoteSessionProc = null;
     }
 
     public static void RunAsService() {
@@ -3593,6 +3651,285 @@ Usuario    : $user
   Write-Host $entry
 }
 
+#region Remote Session
+
+function Invoke-RemoteSession {
+  <#
+  .SYNOPSIS
+    Cliente WebSocket para sesiones remotas.
+    Conecta al servidor via WS, lanza powershell.exe con stdin/stdout/stderr redirigidos
+    y hace de puente entre el WebSocket y el proceso shell.
+    Reconecta automaticamente cada 15s si pierde conexion.
+  #>
+  Write-Info "=== Iniciando Remote Session ==="
+
+  $cfg = Get-Config
+  if (-not $cfg -or -not $cfg.PSObject.Properties['agent_id'] -or -not $cfg.agent_id) {
+    Write-Err "El agente no esta registrado. No se puede iniciar sesion remota."
+    Exit-Cmd 1
+  }
+
+  $agentId = [int]$cfg.agent_id
+  $srvUrl  = Get-ServerUrl
+
+  Write-Info "Agent ID: $agentId | Server: $srvUrl"
+
+  # Build WebSocket URL
+  $wsUrl = $srvUrl -replace '^http', 'ws'
+  $wsUrl = "$wsUrl/ws/remote-session"
+
+  # Generate JWT for auth
+  try {
+    $jwt = New-AgentJWT -agentId $agentId
+    Write-Success "JWT RS256 generado"
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+    Write-Err "Error generando JWT: $_"
+    Exit-Cmd 5
+  }
+
+  # PID file for lifecycle management
+  $pidFile = Join-Path "$env:ProgramData\pswm-reborn" 'remote_session.pid'
+  try { [IO.File]::WriteAllText($pidFile, "$PID") } catch {}
+
+  # Main reconnection loop
+  $reconnectDelay = 15
+  while ($true) {
+    $shellProc = $null
+    $wsClient = $null
+    try {
+      # Connect WebSocket
+      $wsClient = New-Object System.Net.WebSockets.ClientWebSocket
+      $wsClient.Options.SetRequestHeader('Authorization', "Bearer $jwt")
+      $cts = New-Object System.Threading.CancellationTokenSource
+
+      Write-Info "Conectando a $wsUrl ..."
+      $connectTask = $wsClient.ConnectAsync([Uri]$wsUrl, $cts.Token)
+      $connectTask.Wait(30000)
+
+      if ($wsClient.State -ne [System.Net.WebSockets.WebSocketState]::Open) {
+        Write-Err "No se pudo conectar al WebSocket (estado: $($wsClient.State))"
+        throw "connection_failed"
+      }
+
+      Write-Success "WebSocket conectado"
+
+      # Send agent:register
+      $regMsg = @{ type = 'agent:register'; payload = @{ agentId = $agentId; hostname = $env:COMPUTERNAME } } | ConvertTo-Json -Compress
+      $regBytes = [System.Text.Encoding]::UTF8.GetBytes($regMsg)
+      $sendTask = $wsClient.SendAsync(
+        (New-Object System.ArraySegment[byte](,$regBytes)),
+        [System.Net.WebSockets.WebSocketMessageType]::Text,
+        $true, $cts.Token)
+      $sendTask.Wait(5000)
+
+      # Start PowerShell child process
+      $psi = New-Object System.Diagnostics.ProcessStartInfo
+      $psi.FileName = 'powershell.exe'
+      $psi.Arguments = '-NoProfile -NoLogo -NonInteractive -Command -'
+      $psi.UseShellExecute = $false
+      $psi.CreateNoWindow = $true
+      $psi.RedirectStandardInput = $true
+      $psi.RedirectStandardOutput = $true
+      $psi.RedirectStandardError = $true
+      $shellProc = [System.Diagnostics.Process]::Start($psi)
+
+      Write-Info "Shell PowerShell iniciado (PID: $($shellProc.Id))"
+
+      # Background job: read shell stdout and send to WS
+      $outputBuffer = New-Object System.Text.StringBuilder
+      $lastPing = [DateTime]::UtcNow
+      $lastActivity = [DateTime]::UtcNow
+      $receiveBuffer = New-Object byte[] 65536
+
+      # Start async stdout/stderr reading
+      $stdoutTask = $shellProc.StandardOutput.ReadLineAsync()
+      $stderrTask = $shellProc.StandardError.ReadLineAsync()
+
+      # Main relay loop
+      while ($wsClient.State -eq [System.Net.WebSockets.WebSocketState]::Open -and -not $shellProc.HasExited) {
+        $didWork = $false
+
+        # 1. Read from WS (non-blocking)
+        try {
+          $seg = New-Object System.ArraySegment[byte](,$receiveBuffer)
+          $recvCts = New-Object System.Threading.CancellationTokenSource(100)
+          $recvTask = $wsClient.ReceiveAsync($seg, $recvCts.Token)
+          try { $recvTask.Wait() } catch {}
+
+          if ($recvTask.IsCompleted -and -not $recvTask.IsFaulted -and -not $recvTask.IsCanceled) {
+            $result = $recvTask.Result
+            if ($result.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) {
+              Write-Info "WebSocket cerrado por servidor"
+              break
+            }
+            if ($result.Count -gt 0) {
+              $msgText = [System.Text.Encoding]::UTF8.GetString($receiveBuffer, 0, $result.Count)
+              $lastActivity = [DateTime]::UtcNow
+              try {
+                $msg = $msgText | ConvertFrom-Json
+                switch ($msg.type) {
+                  'server:input' {
+                    if ($msg.payload -and $msg.payload.data -and -not $shellProc.HasExited) {
+                      $shellProc.StandardInput.Write($msg.payload.data)
+                      $shellProc.StandardInput.Flush()
+                    }
+                  }
+                  'server:resize' {
+                    # PowerShell console resize - best effort
+                  }
+                  'server:pong' {
+                    # Heartbeat response
+                  }
+                  'server:disconnect' {
+                    Write-Info "Servidor solicita desconexion"
+                    break
+                  }
+                  'server:session_start' {
+                    Write-Info "Sesion iniciada (session_id: $($msg.payload.sessionId))"
+                  }
+                  'server:session_end' {
+                    Write-Info "Sesion terminada (session_id: $($msg.payload.sessionId))"
+                  }
+                }
+              } catch {}
+              $didWork = $true
+            }
+          }
+        } catch {}
+
+        # 2. Read stdout from shell
+        if ($stdoutTask.IsCompleted) {
+          $line = $stdoutTask.Result
+          if ($null -ne $line) {
+            $outPayload = @{ type = 'agent:output'; payload = @{ data = "$line`r`n" } } | ConvertTo-Json -Compress
+            $outBytes = [System.Text.Encoding]::UTF8.GetBytes($outPayload)
+            try {
+              $sendT = $wsClient.SendAsync(
+                (New-Object System.ArraySegment[byte](,$outBytes)),
+                [System.Net.WebSockets.WebSocketMessageType]::Text,
+                $true, $cts.Token)
+              $sendT.Wait(5000)
+            } catch {}
+            $lastActivity = [DateTime]::UtcNow
+            $didWork = $true
+          }
+          if (-not $shellProc.HasExited) {
+            $stdoutTask = $shellProc.StandardOutput.ReadLineAsync()
+          }
+        }
+
+        # 3. Read stderr from shell
+        if ($stderrTask.IsCompleted) {
+          $errLine = $stderrTask.Result
+          if ($null -ne $errLine) {
+            $errPayload = @{ type = 'agent:output'; payload = @{ data = "$errLine`r`n" } } | ConvertTo-Json -Compress
+            $errBytes = [System.Text.Encoding]::UTF8.GetBytes($errPayload)
+            try {
+              $sendE = $wsClient.SendAsync(
+                (New-Object System.ArraySegment[byte](,$errBytes)),
+                [System.Net.WebSockets.WebSocketMessageType]::Text,
+                $true, $cts.Token)
+              $sendE.Wait(5000)
+            } catch {}
+            $lastActivity = [DateTime]::UtcNow
+            $didWork = $true
+          }
+          if (-not $shellProc.HasExited) {
+            $stderrTask = $shellProc.StandardError.ReadLineAsync()
+          }
+        }
+
+        # 4. Send heartbeat ping every 30s
+        if (([DateTime]::UtcNow - $lastPing).TotalSeconds -ge 30) {
+          $pingMsg = @{ type = 'agent:ping'; payload = @{} } | ConvertTo-Json -Compress
+          $pingBytes = [System.Text.Encoding]::UTF8.GetBytes($pingMsg)
+          try {
+            $pingT = $wsClient.SendAsync(
+              (New-Object System.ArraySegment[byte](,$pingBytes)),
+              [System.Net.WebSockets.WebSocketMessageType]::Text,
+              $true, $cts.Token)
+            $pingT.Wait(5000)
+          } catch {}
+          $lastPing = [DateTime]::UtcNow
+        }
+
+        # 5. Check inactivity timeout (40s)
+        if (([DateTime]::UtcNow - $lastActivity).TotalSeconds -ge 40) {
+          Write-Info "Timeout de inactividad WS (40s sin trafico). Reconectando..."
+          break
+        }
+
+        if (-not $didWork) {
+          Start-Sleep -Milliseconds 50
+        }
+      }
+
+      # Shell exited notification
+      if ($shellProc.HasExited) {
+        $exitMsg = @{ type = 'agent:exit'; payload = @{ exitCode = $shellProc.ExitCode } } | ConvertTo-Json -Compress
+        $exitBytes = [System.Text.Encoding]::UTF8.GetBytes($exitMsg)
+        try {
+          $exitT = $wsClient.SendAsync(
+            (New-Object System.ArraySegment[byte](,$exitBytes)),
+            [System.Net.WebSockets.WebSocketMessageType]::Text,
+            $true, $cts.Token)
+          $exitT.Wait(5000)
+        } catch {}
+      }
+
+    } catch {
+      if ("$_" -match "^EXIT:\d+$") { throw }
+      Write-Info "Error en sesion remota: $_ (reintentando en ${reconnectDelay}s)"
+    } finally {
+      # Cleanup
+      if ($shellProc -and -not $shellProc.HasExited) {
+        try { $shellProc.Kill() } catch {}
+      }
+      if ($wsClient -and $wsClient.State -eq [System.Net.WebSockets.WebSocketState]::Open) {
+        try {
+          $closeCts = New-Object System.Threading.CancellationTokenSource(5000)
+          $wsClient.CloseAsync([System.Net.WebSockets.WebSocketCloseStatus]::NormalClosure, 'closing', $closeCts.Token).Wait(5000)
+        } catch {}
+      }
+      if ($wsClient) { try { $wsClient.Dispose() } catch {} }
+    }
+
+    # Check if we should still be running (check agent_config.json)
+    $cfgFile = Join-Path "$env:ProgramData\pswm-reborn" 'agent_config.json'
+    $shouldRun = $false
+    if (Test-Path $cfgFile) {
+      try {
+        $acfg = Get-Content $cfgFile -Raw | ConvertFrom-Json
+        if ($acfg.remote_session_enabled -eq $true) { $shouldRun = $true }
+      } catch {}
+    }
+
+    if (-not $shouldRun) {
+      Write-Info "remote_session_enabled = false. Terminando proceso remote_session."
+      break
+    }
+
+    # Regenerate JWT before reconnecting (it may have expired)
+    try {
+      $jwt = New-AgentJWT -agentId $agentId
+    } catch {
+      if ("$_" -match "^EXIT:\d+$") { throw }
+      Write-Info "Error regenerando JWT: $_ (reintentando igualmente)"
+    }
+
+    Write-Info "Reconectando en ${reconnectDelay}s..."
+    Start-Sleep -Seconds $reconnectDelay
+  }
+
+  # Cleanup PID file
+  try { if (Test-Path $pidFile) { Remove-Item $pidFile -Force } } catch {}
+  Write-Info "=== Remote Session finalizada ==="
+  Exit-Cmd 0
+}
+
+#endregion Remote Session
+
 function Invoke-Gui {
   <#
   .SYNOPSIS
@@ -4041,6 +4378,10 @@ Comandos disponibles:
                                                 queda colgado. En este modo NO se captura stdout/stderr de choco.
                         --log-extended-info     Registra en el log cada invocacion de powershell.exe y choco.exe
                                                 con su linea de comando completa y parametros.
+  remote_session      Inicia cliente WebSocket para sesiones remotas interactivas.
+                      Conecta al servidor, lanza powershell.exe y hace relay stdin/stdout via WS.
+                      Reconecta automaticamente cada 15s si pierde conexion.
+                      Gestionado automaticamente por el servicio (svc) segun agent_config.json.
   reset_timers_lock   Elimina la cache de 'choco outdated -r' y el lock local de actualizacion.
                       Fuerza que en la proxima iteracion se re-ejecute la consulta de
                       actualizaciones y el proceso de upgrade de paquetes Chocolatey.
@@ -4102,6 +4443,7 @@ switch ($Command.ToLower()) {
   "update"            { Invoke-UpdateBinaries }
   "uninstall_service" { Invoke-UninstallService }
   "iterate"           { Invoke-Iterate }
+  "remote_session"    { Invoke-RemoteSession }
   "reset_timers_lock" { Invoke-ResetTimersLock }
   "dummy_iterate"     { Invoke-DummyIterate }
   "apply_update"      { Invoke-ApplyUpdate }
