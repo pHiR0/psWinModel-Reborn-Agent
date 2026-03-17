@@ -3697,6 +3697,7 @@ function Invoke-RemoteSession {
   while ($true) {
     $shellProc = $null
     $wsClient = $null
+    $wsDisconnected = $false  # true = WS lost, false = shell exited normally
     try {
       # Connect WebSocket
       $wsClient = New-Object System.Net.WebSockets.ClientWebSocket
@@ -3726,7 +3727,10 @@ function Invoke-RemoteSession {
       # Start PowerShell child process
       $psi = New-Object System.Diagnostics.ProcessStartInfo
       $psi.FileName = 'powershell.exe'
-      $psi.Arguments = '-NoProfile -NoLogo -NonInteractive -Command -'
+      # Prompt loop: PowerShell con stdin redirigido no emite prompt automaticamente.
+      # Usamos -EncodedCommand para evitar problemas de comillas.
+      $shellScript = 'while($true){[Console]::Out.Write("PS "+(Get-Location).Path+"> ");[Console]::Out.Flush();$l=[Console]::In.ReadLine();if($null -eq $l -or $l -eq "exit"){break};try{Invoke-Expression $l}catch{Write-Host ("ERROR: "+$_.Exception.Message) -ForegroundColor Red}}'
+      $psi.Arguments = "-NoProfile -NoLogo -EncodedCommand " + [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($shellScript))
       $psi.UseShellExecute = $false
       $psi.CreateNoWindow = $true
       $psi.RedirectStandardInput = $true
@@ -3746,21 +3750,26 @@ function Invoke-RemoteSession {
       $stdoutTask = $shellProc.StandardOutput.ReadLineAsync()
       $stderrTask = $shellProc.StandardError.ReadLineAsync()
 
+      # Start WS receive task ONCE — never cancel it (canceling ClientWebSocket aborts the socket)
+      $seg = New-Object System.ArraySegment[byte](,$receiveBuffer)
+      $recvTask = $wsClient.ReceiveAsync($seg, [System.Threading.CancellationToken]::None)
+
       # Main relay loop
       while ($wsClient.State -eq [System.Net.WebSockets.WebSocketState]::Open -and -not $shellProc.HasExited) {
         $didWork = $false
 
-        # 1. Read from WS (non-blocking)
+        # 1. Read from WS (non-blocking: Wait(0) returns immediately without canceling)
         try {
-          $seg = New-Object System.ArraySegment[byte](,$receiveBuffer)
-          $recvCts = New-Object System.Threading.CancellationTokenSource(100)
-          $recvTask = $wsClient.ReceiveAsync($seg, $recvCts.Token)
-          try { $recvTask.Wait() } catch {}
-
-          if ($recvTask.IsCompleted -and -not $recvTask.IsFaulted -and -not $recvTask.IsCanceled) {
+          if ($recvTask.Wait(0)) {
+            if ($recvTask.IsFaulted) {
+              Write-Info "Error en recepcion WS"
+              $wsDisconnected = $true
+              break
+            }
             $result = $recvTask.Result
             if ($result.MessageType -eq [System.Net.WebSockets.WebSocketMessageType]::Close) {
               Write-Info "WebSocket cerrado por servidor"
+              $wsDisconnected = $true
               break
             }
             if ($result.Count -gt 0) {
@@ -3783,6 +3792,7 @@ function Invoke-RemoteSession {
                   }
                   'server:disconnect' {
                     Write-Info "Servidor solicita desconexion"
+                    $wsDisconnected = $true
                     break
                   }
                   'server:session_start' {
@@ -3795,8 +3805,14 @@ function Invoke-RemoteSession {
               } catch {}
               $didWork = $true
             }
+            # Rearm receive for next message
+            $seg = New-Object System.ArraySegment[byte](,$receiveBuffer)
+            $recvTask = $wsClient.ReceiveAsync($seg, [System.Threading.CancellationToken]::None)
           }
-        } catch {}
+        } catch {
+          $wsDisconnected = $true
+          break
+        }
 
         # 2. Read stdout from shell
         if ($stdoutTask.IsCompleted) {
@@ -3857,6 +3873,7 @@ function Invoke-RemoteSession {
         # 5. Check inactivity timeout (40s)
         if (([DateTime]::UtcNow - $lastActivity).TotalSeconds -ge 40) {
           Write-Info "Timeout de inactividad WS (40s sin trafico). Reconectando..."
+          $wsDisconnected = $true
           break
         }
 
@@ -3881,6 +3898,7 @@ function Invoke-RemoteSession {
     } catch {
       if ("$_" -match "^EXIT:\d+$") { throw }
       Write-Info "Error en sesion remota: $_ (reintentando en ${reconnectDelay}s)"
+      $wsDisconnected = $true
     } finally {
       # Cleanup
       if ($shellProc -and -not $shellProc.HasExited) {
@@ -3919,7 +3937,9 @@ function Invoke-RemoteSession {
     }
 
     Write-Info "Reconectando en ${reconnectDelay}s..."
-    Start-Sleep -Seconds $reconnectDelay
+    if ($wsDisconnected) {
+      Start-Sleep -Seconds $reconnectDelay
+    }
   }
 
   # Cleanup PID file
