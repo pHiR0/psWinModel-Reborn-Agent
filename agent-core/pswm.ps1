@@ -2997,6 +2997,21 @@ function Invoke-CheckAndApplyUpdate([string]$serverUrl, [int]$agentId = 0, [stri
     Send-UpdateRun -serverUrl $serverUrl -agentId $agentId -iterationId $iterationId -fromVersion $currentVersion -toVersion $serverVersion
   }
 
+  # Comprobar si hay una sesión remota activa antes de aplicar la actualización.
+  # El proceso remote_session escribe su PID en remote_session.pid mientras está en marcha.
+  $rsPidFile = Join-Path "$env:ProgramData\pswm-reborn" 'remote_session.pid'
+  if (Test-Path $rsPidFile) {
+    try {
+      $rsPid = [int](Get-Content $rsPidFile -ErrorAction Stop)
+      $rsProc = Get-Process -Id $rsPid -ErrorAction SilentlyContinue
+      if ($rsProc) {
+        Write-Info "Actualizacion pospuesta: hay una sesion remota activa (PID $rsPid). Se reintentara en la siguiente iteracion."
+        Remove-Item $tempFile -Force -ErrorAction SilentlyContinue
+        return
+      }
+    } catch {}
+  }
+
   # Lanzar updater como proceso independiente:
   # pswm_updater.exe apply_update -Arg1 "<tempFile>"
   # El updater copiara el tempFile sobre pswm.exe y pswm_svc.exe
