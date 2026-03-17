@@ -3746,9 +3746,11 @@ function Invoke-RemoteSession {
       $lastActivity = [DateTime]::UtcNow
       $receiveBuffer = New-Object byte[] 65536
 
-      # Start async stdout/stderr reading
-      $stdoutTask = $shellProc.StandardOutput.ReadLineAsync()
-      $stderrTask = $shellProc.StandardError.ReadLineAsync()
+      # Start async stdout/stderr reading (BaseStream: captura prompts sin newline)
+      $stdoutBuf = New-Object byte[] 4096
+      $stderrBuf = New-Object byte[] 4096
+      $stdoutTask = $shellProc.StandardOutput.BaseStream.ReadAsync($stdoutBuf, 0, $stdoutBuf.Length)
+      $stderrTask = $shellProc.StandardError.BaseStream.ReadAsync($stderrBuf, 0, $stderrBuf.Length)
 
       # Start WS receive task ONCE — never cancel it (canceling ClientWebSocket aborts the socket)
       $seg = New-Object System.ArraySegment[byte](,$receiveBuffer)
@@ -3816,9 +3818,10 @@ function Invoke-RemoteSession {
 
         # 2. Read stdout from shell
         if ($stdoutTask.IsCompleted) {
-          $line = $stdoutTask.Result
-          if ($null -ne $line) {
-            $outPayload = @{ type = 'agent:output'; payload = @{ data = "$line`r`n" } } | ConvertTo-Json -Compress
+          $n = $stdoutTask.Result
+          if ($n -gt 0) {
+            $text = [System.Text.Encoding]::UTF8.GetString($stdoutBuf, 0, $n)
+            $outPayload = @{ type = 'agent:output'; payload = @{ data = $text } } | ConvertTo-Json -Compress
             $outBytes = [System.Text.Encoding]::UTF8.GetBytes($outPayload)
             try {
               $sendT = $wsClient.SendAsync(
@@ -3831,15 +3834,17 @@ function Invoke-RemoteSession {
             $didWork = $true
           }
           if (-not $shellProc.HasExited) {
-            $stdoutTask = $shellProc.StandardOutput.ReadLineAsync()
+            $stdoutBuf = New-Object byte[] 4096
+            $stdoutTask = $shellProc.StandardOutput.BaseStream.ReadAsync($stdoutBuf, 0, $stdoutBuf.Length)
           }
         }
 
         # 3. Read stderr from shell
         if ($stderrTask.IsCompleted) {
-          $errLine = $stderrTask.Result
-          if ($null -ne $errLine) {
-            $errPayload = @{ type = 'agent:output'; payload = @{ data = "$errLine`r`n" } } | ConvertTo-Json -Compress
+          $n2 = $stderrTask.Result
+          if ($n2 -gt 0) {
+            $errText = [System.Text.Encoding]::UTF8.GetString($stderrBuf, 0, $n2)
+            $errPayload = @{ type = 'agent:output'; payload = @{ data = $errText } } | ConvertTo-Json -Compress
             $errBytes = [System.Text.Encoding]::UTF8.GetBytes($errPayload)
             try {
               $sendE = $wsClient.SendAsync(
@@ -3852,7 +3857,8 @@ function Invoke-RemoteSession {
             $didWork = $true
           }
           if (-not $shellProc.HasExited) {
-            $stderrTask = $shellProc.StandardError.ReadLineAsync()
+            $stderrBuf = New-Object byte[] 4096
+            $stderrTask = $shellProc.StandardError.BaseStream.ReadAsync($stderrBuf, 0, $stderrBuf.Length)
           }
         }
 
