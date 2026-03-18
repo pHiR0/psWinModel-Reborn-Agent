@@ -106,9 +106,11 @@ Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas m
 > Finalizar y Deshabilitar : Lo que hace primero es terminar el proceso pswm.exe remote_session , y ajustar el setting "remote_session_enabled" en el agente en el archivo "agente_config.json" y tambien deshabilitarlo en el setting "Sesión Remota Habilitada" del agente, con una ventana de confirmación y antes de confirmar el botón que confirma tarda con una cuenta atrás visible , 3 segundos en estar disponible.
 > Y dentro de ese menú, un submenú con acciones personalizadas, las cuales se pueden añadir desde "Configuraciones del Servidor" en "Sesiones Remotas" , como un listado de comando, que tiene como propiedades el nombre ,y el comando en sí, en el submenú se muestra el la propiedad nombre, al pulsar sobre alguno de esos items en el sub menú envía el comando a la sesion remota.
 # Implementado: menú "Acciones" en toolbar del terminal con Apagar (shutdown /s), Reiniciar (shutdown /r), Forzar Iteración (Restart-Service), Finalizar y Deshabilitar (Stop-Process + update agent_config.json + PUT API). Modales con formulario (timeout, force, comentario). Cuenta atrás 3s en confirmación de Finalizar. Submenú acciones personalizadas (lateral) cargadas desde setting remote_session_custom_actions. Usuario logueado obtenido via API facts (logged_user) y mostrado junto al nombre del agente. Editor de acciones personalizadas añadido en Settings → Sesiones Remotas.
-- En la interfaz de "Gestión de Grupos"  , cuando gestionamos los agentes en un grupo , ese popup, aparecen los miembros del grupo, bien quiero que cambies el aspecto para que se parezca al popup "Selector de Agentes", mostrando los datos de cada agente agregado, en una card cada uno, con el nombre del Agente, pero incluyendo el owner, la anotacion y el badge de localizacion/ubicacion (igual que el que usamos en el selector de agentes)
++ En la interfaz de "Gestión de Grupos"  , cuando gestionamos los agentes en un grupo , ese popup, aparecen los miembros del grupo, bien quiero que cambies el aspecto para que se parezca al popup "Selector de Agentes", mostrando los datos de cada agente agregado, en una card cada uno, con el nombre del Agente, pero incluyendo el owner, la anotacion y el badge de localizacion/ubicacion (igual que el que usamos en el selector de agentes)
 > Para agregar agente pon abajo un botón, reubicado en otra posicio, y dentro del popup puede mostrar las cards de los miembros en 2 columnas.
-- En las "Versiones de Agente" , cuando no hay ninguna version marcada como beta, a los agentes que están enel grupo designado para recibir la version beta, le enviamos la version estable publicada, con el "Modo de publicación" seleccionado en la version estable, o sea si no hay version beta publicada, a los agentes afectados le aplicamos lo mismo que la version estable.
+# Implementado: GroupAgentsModal rediseñado. Miembros en grid 2 columnas con cards tipo AgentPickerModal: icono 💻 con dot de estado, nombre, owner (👤), annotation, LocationBadge. Botón eliminar aparece on hover. Botón "Añadir agente" reubicado abajo con borde dashed. Datos enriquecidos con allAgents para incluir organization_name y location_path.
++ En las "Versiones de Agente" , cuando no hay ninguna version marcada como beta, a los agentes que están enel grupo designado para recibir la version beta, le enviamos la version estable publicada, con el "Modo de publicación" seleccionado en la version estable, o sea si no hay version beta publicada, a los agentes afectados le aplicamos lo mismo que la version estable.
+# Verificado: este comportamiento ya existe por diseño en GET /api/updates/check y GET /api/updates/download. En /check, si el agente pertenece al grupo beta pero no hay versión con beta_published=1, el flujo cae automáticamente al canal estable usando update_mode y la versión published=1. En /download, si targetVersion es null (sin beta publicada), se sirve la versión stable publicada. No se requirieron cambios de código.
 
 + Al abrir el terminal de sesion remota se muestra esto, y no muestra arriba junto al nomnre del equipo y del estado (coenectado) el nombre del usuario
 > ✓ Conectado al agente DESKTOP-I1O5O3C
@@ -121,5 +123,20 @@ Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas m
 
 + Cuando le doy a recargar en la vista "Sesiones Remotas" actualiza el boliche verde en "Sesiones remotas" en consecuencia, si es necesario
 # Implementado: al recargar datos en sessions/+page.svelte se emite un CustomEvent 'sessions-refreshed'. El +layout.svelte escucha este evento y ejecuta refreshConnectedWsCount() para actualizar el badge del sidebar en tiempo real.
+
+
+- según abro el terminal sale esto :
+>
+>✓ Conectado al agente DESKTOP-I1O5O3C
+>
+>[ el curso parpadeando aquí ]
+>
+>---
+>
+>Y quiero que salga algo así:
+>
+>✓ Conectado al agente DESKTOP-I1O5O3C
+>
+>PS C:\RUTA\LOCAL> [ el curso parpadeando aquí ]
 
 - Antes de finalizar la iteración Revisa una vez mas si hay tareas pendiente en ToDo.md
