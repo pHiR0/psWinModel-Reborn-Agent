@@ -3808,7 +3808,20 @@ function Invoke-RemoteSession {
                     # Heartbeat response
                   }
                   'server:disconnect' {
-                    Write-Info "Servidor solicita desconexion"
+                    $dcReason = if ($msg.payload -and $msg.payload.reason) { $msg.payload.reason } else { 'unknown' }
+                    Write-Info "Servidor solicita desconexion (razon: $dcReason)"
+                    if ($dcReason -eq 'remote_session_disabled') {
+                      # Update local agent_config.json so we don't reconnect
+                      $cfgPath = Join-Path "$env:ProgramData\pswm-reborn" 'agent_config.json'
+                      if (Test-Path $cfgPath) {
+                        try {
+                          $localCfg = Get-Content $cfgPath -Raw | ConvertFrom-Json
+                          $localCfg.remote_session_enabled = $false
+                          $localCfg | ConvertTo-Json -Depth 10 | Set-Content $cfgPath -Encoding UTF8
+                          Write-Info "agent_config.json actualizado: remote_session_enabled = false"
+                        } catch { Write-Warn "No se pudo actualizar agent_config.json: $_" }
+                      }
+                    }
                     $wsDisconnected = $true
                     break
                   }
