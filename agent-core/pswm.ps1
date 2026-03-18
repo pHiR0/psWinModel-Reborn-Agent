@@ -2662,6 +2662,11 @@ function Invoke-ChocoPhased([object]$resolved, [string]$serverUrl, [int]$agentId
         Write-Info "    $pkgName marcado para desinstalar, se omite la actualización"
         continue
       }
+      # Verificar que el paquete esté instalado antes de intentar actualizarlo
+      if (-not $installedNow.ContainsKey($pkgName)) {
+        Write-Info "    $pkgName no está instalado, se omite la actualización"
+        continue
+      }
       $isPinned = $pinnedPkgs.ContainsKey($pkgName)
       if ($isPinned) {
         Write-Info "    $pkgName está pinned, no se actualiza (v$($outdated[$pkgName]) disponible)"
