@@ -139,5 +139,3 @@ Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas m
 >
 >PS C:\RUTA\LOCAL> [ el curso parpadeando aquí ]
 # Corregido: al recibir server:status connected, el terminal envía una línea vacía (\r\n) al shell del agente para provocar un nuevo prompt. El prompt inicial se enviaba antes de que el usuario web se conectara y se perdía. Ahora al conectar se ve "PS ruta> " con el cursor listo.
-
-- Antes de finalizar la iteración Revisa una vez mas si hay tareas pendiente en ToDo.md

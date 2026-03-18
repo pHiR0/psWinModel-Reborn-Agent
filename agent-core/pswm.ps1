@@ -3756,7 +3756,7 @@ function Invoke-RemoteSession {
       $psi.FileName = 'powershell.exe'
       # Prompt loop: PowerShell con stdin redirigido no emite prompt automaticamente.
       # Usamos -EncodedCommand para evitar problemas de comillas.
-      $shellScript = 'while($true){[Console]::Out.Write("PS "+(Get-Location).Path+"> ");[Console]::Out.Flush();$l=[Console]::In.ReadLine();if($null -eq $l -or $l -eq "exit"){break};try{Invoke-Expression $l}catch{Write-Host ("ERROR: "+$_.Exception.Message) -ForegroundColor Red}}'
+      $shellScript = 'while($true){[Console]::Out.Write("PS "+(Get-Location).Path+"> ");[Console]::Out.Flush();$l=[Console]::In.ReadLine();if($null -eq $l -or $l -eq "exit"){break};if($l.Trim() -eq ""){continue};try{Invoke-Expression $l}catch{Write-Host ("ERROR: "+$_.Exception.Message) -ForegroundColor Red}}'
       $psi.Arguments = "-NoProfile -NoLogo -EncodedCommand " + [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($shellScript))
       $psi.UseShellExecute = $false
       $psi.CreateNoWindow = $true
