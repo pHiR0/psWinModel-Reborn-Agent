@@ -3630,6 +3630,13 @@ function Invoke-Iterate {
   # Notificar fin de iteracion al servidor
   Finish-AgentIteration -serverUrl $srvUrl -agentId $agentId -iterationId $script:IterationId -hadErrors $script:IterationHadErrors
 
+  # Refrescar agent_config.json post-iteración (el servidor puede haber activado remote_session tras 3 errores)
+  try {
+    Get-AgentConfig -serverUrl $srvUrl -agentId $agentId | Out-Null
+  } catch {
+    if ("$_" -match "^EXIT:\d+$") { throw }
+  }
+
   Write-Success "=== Iteracion completada en $durStr ==="
   Exit-Cmd 0
 }
