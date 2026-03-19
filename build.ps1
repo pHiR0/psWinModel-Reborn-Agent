@@ -82,6 +82,15 @@ $params = @{
     verbose = $true
 }
 
+# Use icon if available
+$icoPath = Join-Path $PSScriptRoot "build\pswm.ico"
+if (Test-Path $icoPath) {
+    $params['iconFile'] = $icoPath
+    Write-Host "      Usando icono: $icoPath" -ForegroundColor Cyan
+} else {
+    Write-Host "      [INFO] No se encontro build\pswm.ico, compilando sin icono." -ForegroundColor DarkGray
+}
+
 # Compilar
 Write-Host "[2/4] Compilando $sourceScript -> build\pswm.exe  (version $buildVersion)..." -ForegroundColor Yellow
 Invoke-ps2exe @params

@@ -142,10 +142,11 @@ Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas m
 >PS C:\RUTA\LOCAL> [ el curso parpadeando aquí ]
 # Corregido: al recibir server:status connected, el terminal envía una línea vacía (\r\n) al shell del agente para provocar un nuevo prompt. El prompt inicial se enviaba antes de que el usuario web se conectara y se perdía. Ahora al conectar se ve "PS ruta> " con el cursor listo.
 
-- Quiero que generes el icono de la aplicacion, que es el que aparece arriba del todo en el sidemenú junto al nombre psWinModel, que en el HTML aparece como "<div class="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg"><svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path></svg></div>"
++ Quiero que generes el icono de la aplicacion, que es el que aparece arriba del todo en el sidemenú junto al nombre psWinModel, que en el HTML aparece como "<div class="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg"><svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path></svg></div>"
 > Genera las diferentes variantes en las diferntes resoluciones mas usadas y en formatos .ico y .png
 > Despues ponlo como favicon.ico
 > Tambien quiero que modifiques el build.ps1 para compilar el pswm.exe usando ese icono
+# Implementado: icono generado como SVG (icon.svg) + PNGs (16/32/48/64/128/256px) + favicon.ico (multi-resolución 16/32/48/256) en web-console/static/. Favicon configurado en app.html con SVG, PNG-32 y PNG-16. ICO copiado a agent build/pswm.ico. build.ps1 modificado para usar iconFile si pswm.ico existe. Script generador _gen_icons.ps1 disponible en static/ para regenerar.
 + En el titulo de la pestaña aparece la url del psWinmode en mi caso pswm-console.phiro.es/ y quiero que apareza el nombre de la app que es psWinModel Reborn - Console
 # Implementado: añadido <title>psWinModel Reborn - Console</title> en app.html del web-console.
 + En algunos Agentes, en la web console le habilitado el setting "Sesión Remota Habilitada" , revisalo porque en algun caso ya ha pasado mas de 24 horas desde que lo activé y la condicion era que desde hayan pasado 24 horas, sin haber abierto un terminal de ese agente, lo deshabilitara.
@@ -184,3 +185,5 @@ Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas m
 - El popup de "Nueva Accion Personalizada" y "Editar Accion Personalizada" quiero que sean mas grande, el doble de alto y el doble de ancho al actual
 - En los facts solo has puesto iconos para copiar el valor o el nombre de un nodo final, te falta el icono para copiar el path y también para copiar el nombre o el path de los nodos padres. Al pulsar cualquier de ellos que apareza una aviso breve tipo notificioan flash de Android como que se ha copiado al portapapeles
 - Cuando pulso sobre "Filtrar por este script" en las iteraciones de un agente, lo que haces es desplegar todas las iteraciones, pero siguen mostrando todos los scritps de todas las iteraciones, tiene que mostrar únicamente ese script en todas la iteraciones.
+
+- Al final cuando termines desglosame lo que has implementado por cada una de los siguientes "En la Web Console" , "En el agente pswm", "En el servidor"
