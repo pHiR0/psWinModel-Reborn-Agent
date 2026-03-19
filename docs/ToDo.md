@@ -155,7 +155,8 @@ Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas m
 > En el titulo de la pestaña pon el titulo acorde al nombre del agente, con el favicon de la app que designamos anteriormente.
 > Las "Acciones > Acciones Personalizadas" si hay disponible, quiero que aparezan en orden alfaberico segun el nombre
 > También quiero una Accion Personalizada dentro, que me permita pegar en ese momento un bloque de código y enviarlo. Si lo vuelvo a usar que apareza el ultimo bloque de código usado (esto es un setting que se guarda en localstorage)
-- Los 2 popups de "Filtros" y el de "Acciones" en "Gestion de Agentes" quiero que cuando se haga click fuera de ellos se cierren automáticamente ya que actualmente hay que pulsar otra vez en "Filtros" o "Acciones" para cerrarlo
++ Los 2 popups de "Filtros" y el de "Acciones" en "Gestion de Agentes" quiero que cuando se haga click fuera de ellos se cierren automáticamente ya que actualmente hay que pulsar otra vez en "Filtros" o "Acciones" para cerrarlo
+# Implementado: añadido svelte:window on:click handler que cierra ambos popups. Los contenedores div.relative de cada popup usan on:click|stopPropagation para evitar que clicks internos los cierren.
 - En configuración "Sesiones Remotas" quiero hacer alguos cambios en "Acciones Personalizadas":
 > Quiero que las acciones personalizadas aparezan ahora como badges en el cual se muestra dentro un switch slide, el nombre, y el tamaño en bytes (huma readable) del comando, además de los iconos correspondientes para editar y eliminar.
 > Como ves en el punto anterior tiene un slide que lo que determina es si está disponible o no, en el menu de "Acciones > Acciones Personalizadas" del terminal de sesion remota
