@@ -12,6 +12,8 @@ No tienes que modificar el contenido, nada mas que para marcarlo como hecho. Lo 
 
 Además quiero que cada vez que implementes una tareas o una característica, hagas un git commit , pero no hagas git push , excepto peticion expresa.
 
+Antes de empezar designa un orden de las tareas o características, desde la mas sencilla a la mas complicada, para que las implementes en ese orden.
+
 Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas mejoras o correcciones e implementalas, segun los criterios indicados anteriormente.
 
 ---
@@ -139,3 +141,34 @@ Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas m
 >
 >PS C:\RUTA\LOCAL> [ el curso parpadeando aquí ]
 # Corregido: al recibir server:status connected, el terminal envía una línea vacía (\r\n) al shell del agente para provocar un nuevo prompt. El prompt inicial se enviaba antes de que el usuario web se conectara y se perdía. Ahora al conectar se ve "PS ruta> " con el cursor listo.
+
+- Quiero que generes el icono de la aplicacion, que es el que aparece arriba del todo en el sidemenú junto al nombre psWinModel, que en el HTML aparece como "<div class="w-12 h-12 rounded-xl bg-gradient-to-br from-blue-500 to-blue-600 flex items-center justify-center shadow-lg"><svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path></svg></div>"
+> Genera las diferentes variantes en las diferntes resoluciones mas usadas y en formatos .ico y .png
+> Despues ponlo como favicon.ico
+> Tambien quiero que modifiques el build.ps1 para compilar el pswm.exe usando ese icono
+- En el titulo de la pestaña aparece la url del psWinmode en mi caso pswm-console.phiro.es/ y quiero que apareza el nombre de la app que es psWinModel Reborn - Console
+- En algunos Agentes, en la web console le habilitado el setting "Sesión Remota Habilitada" , revisalo porque en algun caso ya ha pasado mas de 24 horas desde que lo activé y la condicion era que desde hayan pasado 24 horas, sin haber abierto un terminal de ese agente, lo deshabilitara.
+- el pswm.exe remote_session lo lanza pswm_svc.exe pero solo comprueba si lo tiene que lanzar siemrpe que termine una pswm.exe iterate, quiero que lo compruebe antes del pswm.exe iterate, y tambien después. Así si een agent_config.json remote_session_enabled está a true de una iteración anterior, lo lanzará nada mas iniciar el servicio.
+> Ten en cuenta siempre que no se puedan ejecutar 2 sesiones de pswm.exe remote_session al mismo tiempo, incluso si he iniciado manualmente el pswm.exe remote_session desde un usuario admin,  el servicio debe controlar que no exista una ejecución en marcha , que para eso creo que usamos el remote_session.pid
+- Quiero que los terminales de sesiones remotas, ahora se abran en una ventana/pestaña nueva independiente, y con la interfaz de esa web completa centrada unicamente en el terminal, no quiero apareza sidemenu, ni nada generl, unicamente datos del agente, y la propia terminal (la misma que usamos ahora mismo)
+> En el titulo de la pestaña pon el titulo acorde al nombre del agente, con el favicon de la app que designamos anteriormente.
+> Las "Acciones > Acciones Personalizadas" si hay disponible, quiero que aparezan en orden alfaberico segun el nombre
+> También quiero una Accion Personalizada dentro, que me permita pegar en ese momento un bloque de código y enviarlo. Si lo vuelvo a usar que apareza el ultimo bloque de código usado (esto es un setting que se guarda en localstorage)
+- Los 2 popups de "Filtros" y el de "Acciones" en "Gestion de Agentes" quiero que cuando se haga click fuera de ellos se cierren automáticamente ya que actualmente hay que pulsar otra vez en "Filtros" o "Acciones" para cerrarlo
+- En configuración "Sesiones Remotas" quiero hacer alguos cambios en "Acciones Personalizadas":
+> Quiero que las acciones personalizadas aparezan ahora como badges en el cual se muestra dentro un switch slide, el nombre, y el tamaño en bytes (huma readable) del comando, además de los iconos correspondientes para editar y eliminar.
+> Como ves en el punto anterior tiene un slide que lo que determina es si está disponible o no, en el menu de "Acciones > Acciones Personalizadas" del terminal de sesion remota
+> Luego el icono de eliminar pues hace lo que le corresponde, con confirmacion previa
+> El de editar tambien hace lo oportuno
+- En la pestaña iteracines  de cualquier agente dentro de la iteraciones aparecen las diferentes cosas que se han hecho, como ejecuion de scripts facts, scripts actions, ejecuiones de choco , actualizacion del pswm, etc ... , pues en la columna detalles, junto a al icono "Ver Detalles" quiero un icono nuevo que, al pulsarlo va a filtrar en todas las iteraciones registradas de ese agente, y va mostrar unicamente de forma expandidas todos,las del "Script" que haya seleccionado
+> Entonces arriba en la cabecera junto al botón "Recargar ejecuciones" aparece un botón para reestablecerlo y volver a mostrar como al principio.
+- En los facts, tenemos un arbol de nodos, en los que hay de tipo contenedores y de tipo clave valor:
+> Quiero que al pasar el curso por encima de los de tipo contenedor aparezcan 2 iconos discretos a la derecha, uno que permita copiar al portapapeles el nombre del nodo, y otro copia el Path completo hasta llegar a él (incluído él), en formato como si fuera una ruta de windows separando padres e hijos con el caracter \
+> En los nodos de clave valor, lo mismo lo que ademas de copiar el nombre, y la ruta completa, tambien la posiblidad de copiar el valor del nodo.
+- Quiero que empecemos a generar versiones para la webconsole y el server, el formato será el mismo que usamos para el pswm YYYY.MM.DD.HHmm (normalizada).
+> Esta version unicamente se genera cuando desplegamos en el LXC
+> Tambien cuando se genere una version, y una vez que hemos hecho el despliegue correctamente en el LXC generamos el git tag
+> Quiero que la version apareza en el SideMenu, en la parte de arriba donde está el nombre de la app "psWinModel" justo debajo del titulo
+> Documenta en el mismo documento que te sirve de guia para desplegar en el LXC esta nueva información para de como se genera la version y para no olvidar que hay que hacerlo cada vez.
+- En la vista "Despliegues" de powershell en la columna "Scripts" muestras los badges con los scripts asociados al despliegue quiero que hagas lo mismo que hicimo con los desplieuges de chocolatey, mostrar unicamente los 2 primeros y el resto se muestra cuando pulsamo son "Ver X más.." que estará debajo
+- Solo mira y dime si para que un agente que ejecute pswm remote_session al interactuar tiene que autenticar, y busca posibles problemas de seguridad, audita todo el sistema de "Sessiones Remotas" y propón soluciones sin implmentarlas, esto quiero que lo hagas al principio de la iteración antes de todas la demás tareas, a fin de poder tomar una desicion antes de termines la iteración.
