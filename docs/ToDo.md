@@ -174,11 +174,12 @@ Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas m
 > Quiero que al pasar el curso por encima de los de tipo contenedor aparezcan 2 iconos discretos a la derecha, uno que permita copiar al portapapeles el nombre del nodo, y otro copia el Path completo hasta llegar a él (incluído él), en formato como si fuera una ruta de windows separando padres e hijos con el caracter \
 > En los nodos de clave valor, lo mismo lo que ademas de copiar el nombre, y la ruta completa, tambien la posiblidad de copiar el valor del nodo.
 # Implementado: renderJsonTree ampliado con fullPath (ruta completa estilo Windows con \). En contenedores: 2 iconos hover (copiar nombre, copiar ruta). En clave-valor: 3 iconos hover (nombre, ruta, valor). En hojas simples (no JSON): 2 iconos hover (nombre, valor). Usa group-hover/row de Tailwind para visibilidad discreta.
-- Quiero que empecemos a generar versiones para la webconsole y el server, el formato será el mismo que usamos para el pswm YYYY.MM.DD.HHmm (normalizada).
++ Quiero que empecemos a generar versiones para la webconsole y el server, el formato será el mismo que usamos para el pswm YYYY.MM.DD.HHmm (normalizada).
 > Esta version unicamente se genera cuando desplegamos en el LXC
 > Tambien cuando se genere una version, y una vez que hemos hecho el despliegue correctamente en el LXC generamos el git tag
 > Quiero que la version apareza en el SideMenu, en la parte de arriba donde está el nombre de la app "psWinModel" justo debajo del titulo
 > Documenta en el mismo documento que te sirve de guia para desplegar en el LXC esta nueva información para de como se genera la version y para no olvidar que hay que hacerlo cada vez.
+# Implementado: version.json en raíz con "dev" por defecto. deploy.sh genera versión YYYY.MM.DD.HHmm, escribe version.json, crea git tag vX.X.X.XXXX y lo publica. Endpoint GET /api/version (sin auth) sirve la versión. SideMenu muestra "vX.X.X.XXXX" debajo del título (oculto en modo dev). Documentado en docs/despliegue-lxc.md sección "Versionado de la aplicación".
 + En la vista "Despliegues" de powershell en la columna "Scripts" muestras los badges con los scripts asociados al despliegue quiero que hagas lo mismo que hicimo con los desplieuges de chocolatey, mostrar unicamente los 2 primeros y el resto se muestra cuando pulsamo son "Ver X más.." que estará debajo
 # Implementado: columna Scripts en despliegues PS ahora muestra solo los 2 primeros badges. Si hay más, aparece botón "▼ Ver X más..." / "▲ Mostrar menos" (mismo patrón que Choco con expandedScriptRows Set).
 - Solo mira y dime si para que un agente que ejecute pswm remote_session al interactuar tiene que autenticar, y busca posibles problemas de seguridad, audita todo el sistema de "Sessiones Remotas" y propón soluciones sin implmentarlas, esto quiero que lo hagas al principio de la iteración antes de todas la demás tareas, a fin de poder tomar una desicion antes de termines la iteración.
@@ -188,6 +189,6 @@ Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas m
 - Cuando pulso sobre "Filtrar por este script" en las iteraciones de un agente, lo que haces es desplegar todas las iteraciones, pero siguen mostrando todos los scritps de todas las iteraciones, tiene que mostrar únicamente ese script en todas la iteraciones.
 - En "Sesiones Remotas", el "Historial de Sesiones" quiero que lo muestre paginado con opciones de 10, 20, 50, 100 y 200 
 > También quiero un setting en la configuración para determinar la cantidad de retención del Historial , por número de registros mínimo 20 , máximo 600
-
+- En los terminales Detached, arriba en el titulo del terminal , titulo de la pestaña y en el texto de conexión usas "Agente #26" y el texto "Conectado al agente #26" y tienes que usar el nombre del agente
 
 - Al final cuando termines desglosame lo que has implementado por cada una de los siguientes "En la Web Console" , "En el agente pswm", "En el servidor"
