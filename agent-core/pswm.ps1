@@ -1292,6 +1292,8 @@ public class PswmService : ServiceBase {
     private void WorkerLoop() {
         string pswmExe = Path.Combine(_exeDir, "pswm.exe");
         while (!_stopRequested) {
+            // Manage remote_session BEFORE iterate (so it starts immediately on service start if enabled)
+            try { ManageRemoteSession(pswmExe); } catch (Exception ex) { Log("RS ERROR pre-iterate: " + ex.Message); }
             try {
                 Log("Ejecutando: pswm.exe " + _command);
                 var psi = new ProcessStartInfo(pswmExe, _command) {
@@ -1345,6 +1347,21 @@ public class PswmService : ServiceBase {
     private void ManageRemoteSession(string pswmExe) {
         bool shouldRun = IsRemoteSessionEnabled();
         bool isRunning = _remoteSessionProc != null && !_remoteSessionProc.HasExited;
+
+        // Check remote_session.pid for externally started processes (e.g. admin ran pswm.exe remote_session manually)
+        if (shouldRun && !isRunning) {
+            string pidFile = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData), "pswm-reborn", "remote_session.pid");
+            if (File.Exists(pidFile)) {
+                try {
+                    int extPid = int.Parse(File.ReadAllText(pidFile).Trim());
+                    var extProc = Process.GetProcessById(extPid);
+                    if (extProc != null && !extProc.HasExited) {
+                        Log("RS: External remote_session already running (PID: " + extPid + "), skipping launch");
+                        return;
+                    }
+                } catch { /* PID file stale or process gone, ignore */ }
+            }
+        }
 
         if (shouldRun && !isRunning) {
             Log("RS: Launching remote_session process");
@@ -1432,7 +1449,49 @@ public class PswmService : ServiceBase {
     Write-Info "Comando: pswm.exe $cmd"
     Write-Info "Intervalo por defecto: $($script:SvcIntervalMinutes) minutos (se actualizará desde config del servidor)"
 
+    function Manage-RemoteSessionFallback($exe, $currentProc) {
+      $cfgFile = Join-Path "$env:ProgramData\pswm-reborn" 'agent_config.json'
+      $shouldRun = $false
+      if (Test-Path $cfgFile) {
+        try {
+          $acfg = Get-Content $cfgFile -Raw | ConvertFrom-Json
+          if ($acfg.remote_session_enabled -eq $true) { $shouldRun = $true }
+        } catch {}
+      }
+      $isRunning = $currentProc -and (-not $currentProc.HasExited)
+      # Check PID file for externally started processes
+      if ($shouldRun -and -not $isRunning) {
+        $pidFile = Join-Path "$env:ProgramData\pswm-reborn" 'remote_session.pid'
+        if (Test-Path $pidFile) {
+          try {
+            $extPid = [int](Get-Content $pidFile -Raw).Trim()
+            $extProc = Get-Process -Id $extPid -ErrorAction SilentlyContinue
+            if ($extProc) {
+              Write-Info "RS: External remote_session running (PID $extPid), skipping"
+              return $currentProc
+            }
+          } catch {}
+        }
+      }
+      if ($shouldRun -and -not $isRunning) {
+        Write-Info "RS: Launching remote_session"
+        try {
+          $currentProc = Start-Process -FilePath $exe -ArgumentList 'remote_session' -NoNewWindow -PassThru
+          Write-Info "RS: Started (PID: $($currentProc.Id))"
+        } catch { Write-Err "RS: Failed to start: $_" }
+      } elseif (-not $shouldRun -and $isRunning) {
+        Write-Info "RS: Stopping remote_session (disabled)"
+        try { $currentProc.Kill(); $currentProc.WaitForExit(5000) } catch {}
+        $currentProc = $null
+      }
+      return $currentProc
+    }
+
+    $rsProc = $null
+
     while ($true) {
+      # Manage remote_session BEFORE iterate
+      $rsProc = Manage-RemoteSessionFallback $pswmExe $rsProc
       $ts = Get-Date -Format 'yyyy-MM-dd HH:mm:ss'
       Write-Info "[$ts] Ejecutando: pswm.exe $cmd"
       try {
@@ -1442,6 +1501,8 @@ public class PswmService : ServiceBase {
         if ("$_" -match "^EXIT:\d+$") { throw }
         Write-Err "Error ejecutando pswm.exe: $_"
       }
+      # Manage remote_session AFTER iterate
+      $rsProc = Manage-RemoteSessionFallback $pswmExe $rsProc
       # Read interval from config file (updated by iterate) or use default
       $cfgIntervalMin = $script:SvcIntervalMinutes
       $cfgFile = Join-Path "$env:ProgramData\pswm-reborn" 'agent_config.json'
