@@ -16,6 +16,8 @@ Antes de empezar designa un orden de las tareas o características, desde la mas
 
 Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas mejoras o correcciones e implementalas, segun los criterios indicados anteriormente.
 
+Al final cuando termines y no haya ninguna nueva tarea apuntada en el ToDo.md, desglosame lo que has implementado por cada una de los siguientes "En la Web Console" , "En el agente pswm", "En el servidor"
+
 ---
 
 + Las fechas que pusimos anteriormente  para indicar si la version del pswm era superior (Flecha Arriba Azul) o inferior (Fecha Abajo Roja) a la estable, son muy pequeñas, quiero que sean un poco mas visibles mas bolded, quizás un poco mas grande pero sin sobrepasar el tamaño de letra la propia version, simplemente quiero que sean visibles comodamente a la vista.
@@ -197,4 +199,3 @@ Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas m
 + En los terminales Detached, arriba en el titulo del terminal , titulo de la pestaña y en el texto de conexión usas "Agente #26" y el texto "Conectado al agente #26" y tienes que usar el nombre del agente
 # Corregido: la API devuelve el agente directamente (res.json(agent)) no envuelto en {agent:...}. Cambiado data.agent?.name a data.name en terminal/[id]/+page.svelte.
 
-- Al final cuando termines desglosame lo que has implementado por cada una de los siguientes "En la Web Console" , "En el agente pswm", "En el servidor"
