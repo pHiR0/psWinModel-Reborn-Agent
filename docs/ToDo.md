@@ -146,7 +146,8 @@ Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas m
 > Genera las diferentes variantes en las diferntes resoluciones mas usadas y en formatos .ico y .png
 > Despues ponlo como favicon.ico
 > Tambien quiero que modifiques el build.ps1 para compilar el pswm.exe usando ese icono
-- En el titulo de la pestaña aparece la url del psWinmode en mi caso pswm-console.phiro.es/ y quiero que apareza el nombre de la app que es psWinModel Reborn - Console
++ En el titulo de la pestaña aparece la url del psWinmode en mi caso pswm-console.phiro.es/ y quiero que apareza el nombre de la app que es psWinModel Reborn - Console
+# Implementado: añadido <title>psWinModel Reborn - Console</title> en app.html del web-console.
 - En algunos Agentes, en la web console le habilitado el setting "Sesión Remota Habilitada" , revisalo porque en algun caso ya ha pasado mas de 24 horas desde que lo activé y la condicion era que desde hayan pasado 24 horas, sin haber abierto un terminal de ese agente, lo deshabilitara.
 - el pswm.exe remote_session lo lanza pswm_svc.exe pero solo comprueba si lo tiene que lanzar siemrpe que termine una pswm.exe iterate, quiero que lo compruebe antes del pswm.exe iterate, y tambien después. Así si een agent_config.json remote_session_enabled está a true de una iteración anterior, lo lanzará nada mas iniciar el servicio.
 > Ten en cuenta siempre que no se puedan ejecutar 2 sesiones de pswm.exe remote_session al mismo tiempo, incluso si he iniciado manualmente el pswm.exe remote_session desde un usuario admin,  el servicio debe controlar que no exista una ejecución en marcha , que para eso creo que usamos el remote_session.pid
