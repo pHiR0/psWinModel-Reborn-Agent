@@ -164,9 +164,10 @@ Antes de terminar la iteración vuelve a releer el archivo a ver si hay nuevas m
 > El de editar tambien hace lo oportuno
 - En la pestaña iteracines  de cualquier agente dentro de la iteraciones aparecen las diferentes cosas que se han hecho, como ejecuion de scripts facts, scripts actions, ejecuiones de choco , actualizacion del pswm, etc ... , pues en la columna detalles, junto a al icono "Ver Detalles" quiero un icono nuevo que, al pulsarlo va a filtrar en todas las iteraciones registradas de ese agente, y va mostrar unicamente de forma expandidas todos,las del "Script" que haya seleccionado
 > Entonces arriba en la cabecera junto al botón "Recargar ejecuciones" aparece un botón para reestablecerlo y volver a mostrar como al principio.
-- En los facts, tenemos un arbol de nodos, en los que hay de tipo contenedores y de tipo clave valor:
++ En los facts, tenemos un arbol de nodos, en los que hay de tipo contenedores y de tipo clave valor:
 > Quiero que al pasar el curso por encima de los de tipo contenedor aparezcan 2 iconos discretos a la derecha, uno que permita copiar al portapapeles el nombre del nodo, y otro copia el Path completo hasta llegar a él (incluído él), en formato como si fuera una ruta de windows separando padres e hijos con el caracter \
 > En los nodos de clave valor, lo mismo lo que ademas de copiar el nombre, y la ruta completa, tambien la posiblidad de copiar el valor del nodo.
+# Implementado: renderJsonTree ampliado con fullPath (ruta completa estilo Windows con \). En contenedores: 2 iconos hover (copiar nombre, copiar ruta). En clave-valor: 3 iconos hover (nombre, ruta, valor). En hojas simples (no JSON): 2 iconos hover (nombre, valor). Usa group-hover/row de Tailwind para visibilidad discreta.
 - Quiero que empecemos a generar versiones para la webconsole y el server, el formato será el mismo que usamos para el pswm YYYY.MM.DD.HHmm (normalizada).
 > Esta version unicamente se genera cuando desplegamos en el LXC
 > Tambien cuando se genere una version, y una vez que hemos hecho el despliegue correctamente en el LXC generamos el git tag
