@@ -1923,17 +1923,26 @@ function Collect-Facts {
 
   # --- Discos ---
   try {
-    $disks = Get-CimInstance -ClassName Win32_LogicalDisk -Filter "DriveType=3" -ErrorAction SilentlyContinue
-    $diskInfo = @()
+    $driveTypeMap = @{ 0='Unknown'; 1='NoRoot'; 2='Removable'; 3='Fixed'; 4='Network'; 5='Optical'; 6='Ram' }
+    $disks = Get-CimInstance -ClassName Win32_LogicalDisk -ErrorAction SilentlyContinue
+    $diskInfo = [ordered]@{}
     foreach ($d in $disks) {
-      $diskInfo += @{
-        letter   = $d.DeviceID
-        size_gb  = [math]::Round($d.Size / 1GB, 2)
-        free_gb  = [math]::Round($d.FreeSpace / 1GB, 2)
-        label    = $d.VolumeName
+      $letter = ($d.DeviceID -replace ':','').ToUpper()   # "C:" -> "C"
+      $sizeGb  = if ($d.Size)      { [math]::Round($d.Size      / 1GB, 2) } else { 0 }
+      $freeGb  = if ($d.FreeSpace) { [math]::Round($d.FreeSpace / 1GB, 2) } else { 0 }
+      $typeName = if ($driveTypeMap.ContainsKey([int]$d.DriveType)) { $driveTypeMap[[int]$d.DriveType] } else { 'Unknown' }
+      $entry = [ordered]@{
+        letter     = $d.DeviceID
+        label      = if ($d.VolumeName) { $d.VolumeName } else { '' }
+        size_gb    = $sizeGb
+        free_gb    = $freeGb
+        type       = $typeName
+        filesystem = if ($d.FileSystem) { $d.FileSystem } else { $null }
+        uuid       = if ($d.VolumeSerialNumber) { $d.VolumeSerialNumber } else { $null }
       }
+      $diskInfo[$letter] = $entry
     }
-    $facts += @{ fact_key = 'disks'; value = ($diskInfo | ConvertTo-Json -Compress -Depth 3); source = 'agent' }
+    $facts += @{ fact_key = 'disks'; value = ($diskInfo | ConvertTo-Json -Compress -Depth 4); source = 'agent' }
   } catch { }
 
   # --- Red ---
