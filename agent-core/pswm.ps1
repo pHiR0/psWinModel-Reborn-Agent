@@ -2032,7 +2032,7 @@ function Collect-Facts {
   try {
     $chocoExe = Get-ChocoExePath
     if ($chocoExe) {
-      $chocoVersion  = (& $chocoExe -v -r 2>$null)?.Trim()
+      $chocoVersion  = if ($null -ne ($chocoRaw = (& $chocoExe -v -r 2>$null))) { "$chocoRaw".Trim() } else { $null }
       if (-not $chocoVersion) { $chocoVersion = (Get-Item $chocoExe).VersionInfo.FileVersion }
       $chocoSources  = Get-ChocoSources -chocoExe $chocoExe
       $chocoFeatures = Get-ChocoFeatures -chocoExe $chocoExe
