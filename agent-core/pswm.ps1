@@ -1305,10 +1305,31 @@ public class PswmService : ServiceBase {
                 };
                 var proc = Process.Start(psi);
                 if (proc != null) {
-                    string stdout = proc.StandardOutput.ReadToEnd();
-                    string stderr = proc.StandardError.ReadToEnd();
-                    proc.WaitForExit();
-                    Log("Exit code: " + proc.ExitCode);
+                    // Leer stdout y stderr en threads paralelos para evitar deadlock de pipe
+                    // (ReadToEnd secuencial puede bloquearse si el hijo llena el buffer de stderr
+                    //  mientras nuestro hilo esta bloqueado leyendo stdout)
+                    string stdout = "";
+                    string stderr = "";
+                    var stdoutThread = new Thread(() => { try { stdout = proc.StandardOutput.ReadToEnd(); } catch { } });
+                    var stderrThread = new Thread(() => { try { stderr = proc.StandardError.ReadToEnd(); } catch { } });
+                    stdoutThread.IsBackground = true;
+                    stderrThread.IsBackground = true;
+                    stdoutThread.Start();
+                    stderrThread.Start();
+
+                    // Timeout watchdog: si iterate supera 2x el intervalo configurado, matar el proceso
+                    int timeoutMs = GetConfigInterval() * 2 * 1000;
+                    bool exited = proc.WaitForExit(timeoutMs);
+                    if (!exited) {
+                        Log("WATCHDOG: pswm.exe " + _command + " supera " + (timeoutMs / 60000) + " minutos sin terminar. Matando proceso (PID: " + proc.Id + ")...");
+                        try { proc.Kill(); } catch (Exception killEx) { Log("Kill error: " + killEx.Message); }
+                        proc.WaitForExit(5000);
+                    }
+                    // Esperar a que los lectores de pipe terminen (el proceso ya cerro sus streams)
+                    stdoutThread.Join(5000);
+                    stderrThread.Join(5000);
+
+                    Log("Exit code: " + proc.ExitCode + (exited ? "" : " [KILLED by watchdog]"));
                     if (!string.IsNullOrWhiteSpace(stdout)) Log("STDOUT: " + stdout.TrimEnd());
                     if (!string.IsNullOrWhiteSpace(stderr)) Log("STDERR: " + stderr.TrimEnd());
                 }
