@@ -11,7 +11,7 @@ Además quiero que cada vez que implementes una tareas o una característica, ha
 
 ##
 
-Ok, adelante con el despliegue en el LXC, mira en la documentacion para que te conectes por ssh, y descuida ya he hecho un snapshot del LXC por si acaso.
+Ok, adelante con el despliegue en el LXC, mira en la documentacion para que te conectes por ssh, y descuida ya he hecho un snapshot del LXC por si acaso. Recuerda incrementar la version tal como indica en la documentación.
 
 ## 
 
