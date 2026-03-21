@@ -207,3 +207,6 @@ Al final cuando termines y no haya ninguna nueva tarea apuntada en el ToDo.md, d
 > Ejemplos de Facts del agente -> facts:\Disks\C\size_gb , facts:\BitLocker\volumes\bitlocker_available
 > Ejemplos de Chocholatey del agente -> choco:\packages\7zip\state , choco:\packages\7zip\action , choco:\packages\7zip\installed_version , choco:\packages\7zip\update_version_available , choco:\packages\7zip\pinned
 > Para todo esto crea un nuevo documento llamado ArtifactsFeatures.md donde vamos a plasmar todo esto que te he comentado y iteraremos sobre el mismo.
+
++ El fact built-in de chocolatey, está determinando la version instalada de chocolatey por el fileversioninfo de choco.exe y para determiar la version de choco exacta hay que usar el comando choco -v -r
+  # Corregido: pswm.ps1 línea 2035 — ahora usa `& $chocoExe -v -r` con fallback a FileVersionInfo si el comando falla

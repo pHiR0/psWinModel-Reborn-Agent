@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   psWinModel Reborn Agent - CLI principal
 
@@ -2032,7 +2032,8 @@ function Collect-Facts {
   try {
     $chocoExe = Get-ChocoExePath
     if ($chocoExe) {
-      $chocoVersion  = (Get-Item $chocoExe).VersionInfo.FileVersion
+      $chocoVersion  = (& $chocoExe -v -r 2>$null)?.Trim()
+      if (-not $chocoVersion) { $chocoVersion = (Get-Item $chocoExe).VersionInfo.FileVersion }
       $chocoSources  = Get-ChocoSources -chocoExe $chocoExe
       $chocoFeatures = Get-ChocoFeatures -chocoExe $chocoExe
 
