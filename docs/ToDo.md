@@ -210,3 +210,27 @@ Al final cuando termines y no haya ninguna nueva tarea apuntada en el ToDo.md, d
 
 + El fact built-in de chocolatey, está determinando la version instalada de chocolatey por el fileversioninfo de choco.exe y para determiar la version de choco exacta hay que usar el comando choco -v -r
   # Corregido: pswm.ps1 línea 2035 — ahora usa `& $chocoExe -v -r` con fallback a FileVersionInfo si el comando falla
+
+- En búsquedas de Inventario, quiero sacar la pestaña "Informes" , que sea un item dentro de la seccion Inventario
+- Los informes no quiero que se abran como un popup, quiero que se abran en una vista similar a la de todos los agentes, pero evidentemetne con las columnas seleccionadas para el informe, con opciones de paginacion de 20,100,200,500 y evidentemente mantener el botón de "Exportar CSV"
+> Quiero que a el encabezado del inventario le implementes las opciones de ordenar por columnas igual que en "Todos los agentes"
+> Tambien quiero un buscador para filtrar en los resultados del informe, que busque por cualquiera de las columnas
+> Cual de das exportar, exporta los registros que coincidan con la búsqueda, si no hay búsqueda todos.
+- El estilo/tipo de pestañas que mas me gusta es el que está implementado en "Configuracion del Servidor", quiero que lo apliques tambien a los siguientes:
+> "Versiones de agente"
+> Grupos
+> "Cola de aprobación"
+> En los detalles de un Agente, me refiero a las pestañas "Información", "Facts","Iteraciones","Packages","Terminal"
+> Y apunta en la doucmentacion de la UI que este es el estilo por defecto que usaremos de aqui en adelante, a menos que se diga lo contrario.
+- Una característica implementada anteriormente no está funcionado:
+> Me refiero a que cuando pulsamos sobre el badge de un "Despliegue de Chocolatey Activo" en la pestaña de "Packages" de un Agente, debe abrir la vista de "Despliegues Choco" pero mostrando en el listado unicamente ese que hemos hecho click.
+> Sucede lo mismo cuando hacemos click en el Depliegue de choco que aparece en el popup del que sale al pulsar el icono junto a cada paquete gestionado
+> Tambien sucede lo mismo al pulsar sobre el badge del "Perfil Chocolatey Activo"
+- En la vista "Scripts de Powershell" quiero que agrupes los script dependiendo del tipo "Action","Facts" usa el mismo estilo que está implementado en "Despligues de Chocolatey"
+- El menú de Acciones del terminal cuando conecto por Ws a un agente, quiero que cuando hagamos click fuera del menú se cierre ya que si lo abro haciendo click en el botón "Acciones" para cerrarlo tengo que seleccionar una accion o volver a picar sobre el botón acciones.
+- Hay a veces que un agente inicia una iteración y el equipo se apaga por la razon que sea en medio de la iteración sin finalizar. Esto provoca que la iteración se quede dentro de "Iteraciones" con estado "Iterando .." indefinidamente, quiero que pasado un tiempo prudencial, que podría ser el doble del tiempo designado para "Intervalo entre iteraciones" , esa iteración que no ha finalizado, y muy importante no ha recivido datos nuevos durante ese tiempo, sea marcada como Abortada. Esta comprobación la puedes hacer cuando se esté visualizando las iteraciones de un agente concreto, no hace falta ir recorriendo todas las iteraciones de la BDD para ir ajustando el estado.
+- En la vista "Gestion de Agentes" usamos el emoji ⚠️ para marcar agente con las ultimas 3 iteraciones fallidas, quiero que uses el icono de alerta/warning que usas detro de "Ejecuciones de scripts" en aquellas que son "Completadas con errores"
+- Tal como definimos en iteraciones anteriores quiero que se muestre la version bajo el psWinModel en la parte alta del psWinModel. si el problema es porque no hay una version anterior genera ahora mismo una version (no la despliegues en el LXC)
+> Y ya que estamos, cuando estamos ejecutando el entorno de desarrollo (npm run dev) le ponemos junto a la misma un badge igual que el que usamos de "BETA" pero cn el texto "DEV" y otro color mas apropiado para ello
+- Al final de toda la iteración como ultima tarea quiero que me sugieras que graficos y datos podríamos implementar en  el DashBoard vista general.
+- En "Sesiones Remoteas" en el "Historial de Sesiones" el paginado por defecto seleccionado es 10
