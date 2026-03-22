@@ -114,3 +114,10 @@ Al final cuando termines y no haya ninguna nueva tarea apuntada en el ToDo.md, d
 
 + Quiero que la informacion de la "ultima conexion terminal" (que acabamos de implementar junto a "Sesión Remota Habilitada" ) de cada agente aparezca tambien en los detalles del agaente, con todo lo necesario para ser usado coo item de inventario agent:\
 # Implementado (commit 35bc68c): schema.js añadidos last_terminal_connection_at, remote_session_enabled y remote_session_enabled_at como agent_col en AGENT_PATHS. Vista de detalles del agente (/agents/[id]) muestra "Última conexión terminal" con formato de fecha y botón de copia de ruta agent:\last_terminal_connection_at.
+
+- En Iteraciones cuando se produce una "Actualizacion del agente" el texto de salida stdout es similar a este "=== stdout ===
+Actualizaci�n de agente iniciada: v2026.03.20.00590 ? v2026.3.21.22241"
+> Quiero que incluya información mas detallada: Version anterior, version nueva, detalles los archivos ejecutables pswm.exe pswm_svc.exe del ants y del pues, los detalles es toda las informaciones relevantes, como tamaño, nombre, ruta completa, hash, FileVersion.
+> Si durante la actualización se produce algun error y es posible capturarlo tambien incluirlo.
+> Además corrge que en la palabra "Actualización" no se ve la tilde y se ve "Actualizaci�n"
+- Cuando estoy editando un Agente en "Editar Agente", bajo los grupos estáticos me aparece "Grupos inteligentes (membresía automática por condiciones)" y debajo aparecen los badges de todos los grupos inteligentes que hay en el sistema, solo debería aparece aquellos a los que tiene membresía
