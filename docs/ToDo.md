@@ -95,3 +95,4 @@ Al final cuando termines y no haya ninguna nueva tarea apuntada en el ToDo.md, d
 
 + En la vista de detalles del agente, en la card "Grupos" no estñan apareciendo los grupos inteligentes del agente
 # Implementado: GET /api/agents/:id/groups ahora usa getAgentGroupIds() que devuelve IDs estáticos + smart. Frontend actualizado con iconos ⚡/👥 y colores amber/purple según tipo.
+
