@@ -119,5 +119,7 @@ Al final cuando termines y no haya ninguna nueva tarea apuntada en el ToDo.md, d
 Actualizaci�n de agente iniciada: v2026.03.20.00590 ? v2026.3.21.22241"
 > Quiero que incluya información mas detallada: Version anterior, version nueva, detalles los archivos ejecutables pswm.exe pswm_svc.exe del ants y del pues, los detalles es toda las informaciones relevantes, como tamaño, nombre, ruta completa, hash, FileVersion.
 > Si durante la actualización se produce algun error y es posible capturarlo tambien incluirlo.
-> Además corrge que en la palabra "Actualización" no se ve la tilde y se ve "Actualizaci�n"
+> Además corrige que en la palabra "Actualización" no se ve la tilde y se ve "Actualizaci�n"
 - Cuando estoy editando un Agente en "Editar Agente", bajo los grupos estáticos me aparece "Grupos inteligentes (membresía automática por condiciones)" y debajo aparecen los badges de todos los grupos inteligentes que hay en el sistema, solo debería aparece aquellos a los que tiene membresía
+- Esto te lo vuelvo a decir ya que anteriormente lo indiqué pero sigue sin funcionar:
+> He iniciado sesion en otro equipo y veo que las "Configuración de columnas personalizadas" que hice en mi equipo personal no aparecen en este nuevo equipo, por lo que intuyo que esto es algo que NO se está guardando en el perfil de usuario en el servidor. Quiero que esta configuracion se preserve alla por donde sea que inicie sesion con mi usuario.
