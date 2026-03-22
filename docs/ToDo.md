@@ -255,3 +255,15 @@ Al final cuando termines y no haya ninguna nueva tarea apuntada en el ToDo.md, d
 # Corregido: causa raíz era que la clase global `.input` en app.css tiene `width: 100%` que anulaba el `w-auto` de Tailwind. En reports/+page.svelte el select ahora usa clases directas de Tailwind (`border border-slate-300 rounded px-2 py-1.5 text-sm bg-white w-auto shrink-0`) sin usar `.input`. En reports/[id]/+page.svelte igual: se añadió `w-auto shrink-0` al select. También se amplió el input de búsqueda de `w-64` a `w-80`.
 + En la modificación para agrupar los scripts por tipo en "Scripts Powershel" , el orden de los grupos es primero van los facts y después las acciones
 # Corregido: cambiado SCRIPT_TYPE_ORDER de ['action', 'fact'] a ['fact', 'action'] en scripts/+page.svelte. Ahora los Facts aparecen en el primer grupo y las Acciones en el segundo.
+
++ A la hora de seleccionar un Grupo Inteligente, lo que pasa es que donde lo seleccione con el selector de grupos, es devolver el Grupo Estático que tiene el mismo ID , esto lo he comprobado en :
+> Despliegues de PowerShell de tipo Grupo
+> Despliegues de Chocolatey de tipo Grupo
+> Y en "Versiones de Agente" cuando selecciono el grupo Beta
+> Tambien he visto que si edito un Agente en "Editar Agente" y le doy a "Agregar grupo" me sale el selector de grupos , pero no aparecen los grupos inteligentes.
+> Implementa una solucion global, creo además que quizás los grupos tanto los inteligentes como los estáticos deberían compartir tabla, evidentemente, habrá un campo para definir el tipo del grupo, así nos aseguramos que un grupo inteligente y uno estático no pueden tener el mismo ID.
+> Además tengo dudas de si un agente pertenece a un grupo inteligente es capaz de ver los despliegues, o configuracioens o lo que sea que aplique a ese grupo inteligente.
+> Revísalo todo y arreglalo
+# Implementado: tabla groups unificada con columna type='static'|'smart'. Migración automática de smart_groups → groups. Nuevo helper src/inventory/groupMembership.js (isAgentInGroup, getMatchingSmartGroupIds). Routes deployments.js y choco.js ahora resuelven también smart groups dinámicamente. updates.js usa isAgentInGroup para beta groups. smart-groups.js reescrito como proxy. Frontend: carga unificada GET /api/groups filtrada localmente por tipo; edit de agente separa grupos estáticos (picker) de smart (sólo lectura).
++ En las "busquedas de inventario" , "informes" y "Grupos inteligente" en el Constructor de condiciones quiero agregar el comparador de fechas, para datos de tipo fecha por ejemplo agent:\last_contact , agent:\registered_at , facts:\chocolatey\lastUpdate , etc ...
+# Implementado (commit 544599c): nuevos operadores de comparación de fechas (before, after, older_than, newer_than) en el constructor de condiciones. Funciona con campos de tipo fecha en agentes, facts e inventario.
