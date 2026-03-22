@@ -96,3 +96,21 @@ Al final cuando termines y no haya ninguna nueva tarea apuntada en el ToDo.md, d
 + En la vista de detalles del agente, en la card "Grupos" no estñan apareciendo los grupos inteligentes del agente
 # Implementado: GET /api/agents/:id/groups ahora usa getAgentGroupIds() que devuelve IDs estáticos + smart. Frontend actualizado con iconos ⚡/👥 y colores amber/purple según tipo.
 
++ He iniciado sesion en otro equipo y veo que las "Configuración de columnas personalizadas" que hice en mi equipo personal no aparecen en este nuevo equipo, por lo que intuyo que esto es algo que NO se está guardando en el perfil de usuario en el servidor. Quiero que esta configuracion se preserve alla por donde sea que inicie sesion con mi usuario.
+> Tambien me gustaría añadir junto a cada dato de cada celda de estas columnas, el icono que se muestre unicamente al pasar el cursos sobre la columna que permita copiar el dato al portapapeles y no te olvides de que cuando lo pulse apareza algun texto parecido a los toast notifications de android para saber que se ha copiado
+# Implementado (commit a2ca0f3): nueva columna view_config TEXT en tabla users (migración db.js). Nuevos endpoints GET/PUT /api/users/me/preferences con soporte view_config. api.ts: getPreferences() y updatePreferences() extendido. agents/+page.svelte: loadViewCfg() async (carga API, fallback localStorage), saveViewCfg() async (guarda en API + localStorage), applyConfig() async, toast con showToast(). Botón copiar (visible al hover) en cada celda de columna personalizada con toast "Copiado al portapapeles".
++ Tambien quiero que pongas el botón de clonar en :
+> Informes de inventario
+> Búsquedas de Inventario
+> Grupos inteligentes
+> Recuerda que cuando usamos el botón Clonar, no quiero que lo clone directamente, es decir que cree el registo, sino que abra el formulario de nuevo con los datos prerellenados igual del original que vamos a clonar
+# Implementado (commit c7c7ae5): botón Clonar (icono SVG) añadido en Informes de Inventario (rptOpenClone), Búsquedas de Inventario (openClone) y Grupos Inteligentes (sgOpenClone). Cada función pre-rellena el modal de creación/edición con los datos del elemento original.
++ En la "Gestión de Grupos" al listado de grupos Estáticos , acompaña a cada grupo el icono correspondiente que representa un grupo estático que es 👥
+> Tambien añadelo a las pestañas "Gripos Estáticos" y "Grupos Inteligentes" a cada uno si icono correspondiente.
+# Implementado (commit 8a7ed43): pestañas de Gestión de Grupos ahora muestran "👥 Grupos Estáticos" y "⚡ Grupos Inteligentes". Cada grupo en el listado de estáticos lleva el prefijo 👥.
++ En algunos Agentes, en la web console sigue habilitado el setting "Sesión Remota Habilitada" , revisalo porque en algun caso ya ha pasado mas de 24 horas desde que lo activé y la condicion era que desde hayan pasado 24 horas, sin haber abierto un terminal de ese agente, lo deshabilitara automaticamente.
+> De hecho jutno al CheckBox me gustaria que pusieras el dato de la fecha y hora que fue habilitado, y tambien la fecha y hora mas reciente que se coencto al terminal de dicho agente. Si no está habilitado solo la fecha y hora de ultima conexion con el agente.
+# Implementado (commit 2f6baa7): nueva columna last_terminal_connection_at (migración db.js). sessionManager.js actualiza la columna al conectar terminal. GET /api/agents/:id ejecuta auto-disable lazy si han pasado 24h sin conexión terminal. Formulario de edición del agente muestra "Habilitado el: [fecha]" y "Última conexión terminal: [fecha]" junto al checkbox.
+
++ Quiero que la informacion de la "ultima conexion terminal" (que acabamos de implementar junto a "Sesión Remota Habilitada" ) de cada agente aparezca tambien en los detalles del agaente, con todo lo necesario para ser usado coo item de inventario agent:\
+# Implementado (commit 35bc68c): schema.js añadidos last_terminal_connection_at, remote_session_enabled y remote_session_enabled_at como agent_col en AGENT_PATHS. Vista de detalles del agente (/agents/[id]) muestra "Última conexión terminal" con formato de fecha y botón de copia de ruta agent:\last_terminal_connection_at.
