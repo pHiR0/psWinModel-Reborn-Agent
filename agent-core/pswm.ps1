@@ -440,7 +440,12 @@ function Invoke-AgentRestMethod {
     Headers = $headers
     ErrorAction = 'Stop'
   }
-  if ($Body) { $params['Body'] = $Body; $params['ContentType'] = $ContentType }
+  if ($Body) {
+    # Forzar UTF-8 como bytes para evitar re-encoding de caracteres no-ASCII (PS5.1)
+    $bodyBytes = [System.Text.Encoding]::UTF8.GetBytes($Body)
+    $params['Body'] = $bodyBytes
+    $params['ContentType'] = "$ContentType; charset=utf-8"
+  }
   if ($OutFile) { $params['OutFile'] = $OutFile }
   return Invoke-RestMethod @params
 }
@@ -3091,7 +3096,9 @@ function Invoke-CheckAndApplyUpdate([string]$serverUrl, [int]$agentId = 0, [stri
 
   # Registrar la actualización en la iteración (si hay contexto de iteración)
   if ($agentId -gt 0 -and $iterationId -ne '') {
-    Send-UpdateRun -serverUrl $serverUrl -agentId $agentId -iterationId $iterationId -fromVersion $currentVersion -toVersion $serverVersion
+    Send-UpdateRun -serverUrl $serverUrl -agentId $agentId -iterationId $iterationId `
+      -fromVersion $currentVersion -toVersion $serverVersion `
+      -myDir $myDir -downloadedFile $tempFile
   }
 
   # Comprobar si hay una sesión remota activa antes de aplicar la actualización.
@@ -3347,9 +3354,64 @@ function Send-ChocoInstallRun([string]$serverUrl, [int]$agentId, [string]$iterat
   }
 }
 
-function Send-UpdateRun([string]$serverUrl, [int]$agentId, [string]$iterationId, [string]$fromVersion, [string]$toVersion) {
+function Get-BinaryFileInfo([string]$path) {
+  <# Devuelve un hashtable con nombre, ruta, tamaño KB, SHA256 y FileVersion de un binario.
+     Devuelve $null si el archivo no existe o hay error. #>
+  if (-not (Test-Path $path -PathType Leaf)) { return $null }
+  try {
+    $fi    = Get-Item $path -ErrorAction Stop
+    $hash  = (Get-FileHash -Path $path -Algorithm SHA256 -ErrorAction Stop).Hash.ToLower()
+    $fvi   = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($path)
+    return @{
+      nombre    = $fi.Name
+      ruta      = $fi.FullName
+      tamano_kb = [Math]::Round($fi.Length / 1024, 2)
+      sha256    = $hash
+      version   = if ($fvi.FileVersion) { $fvi.FileVersion } else { '-' }
+    }
+  } catch { return $null }
+}
+
+function Format-FileInfoLines([string]$label, $info) {
+  <# Formatea las líneas de información de un archivo para el stdout. #>
+  if (-not $info) { return @("  $label : no encontrado") }
+  return @(
+    "  $($info.nombre)"
+    "    Ruta        : $($info.ruta)"
+    "    Tamano      : $($info.tamano_kb) KB"
+    "    FileVersion : $($info.version)"
+    "    SHA256      : $($info.sha256)"
+  )
+}
+
+function Send-UpdateRun([string]$serverUrl, [int]$agentId, [string]$iterationId,
+                        [string]$fromVersion, [string]$toVersion,
+                        [string]$myDir = '', [string]$downloadedFile = '') {
   <# Registra en script_runs la actualización del agente con run_type='agent_update' #>
   try {
+    $lines = @()
+    $lines += "Actualizacion de agente: v$fromVersion -> v$toVersion"
+    $lines += ""
+    $lines += "Version anterior : v$fromVersion"
+    $lines += "Version nueva    : v$toVersion"
+
+    if ($myDir) {
+      $lines += ""
+      $lines += "=== Archivos ANTES de la actualizacion ==="
+      foreach ($name in @('pswm.exe', 'pswm_svc.exe')) {
+        $info = Get-BinaryFileInfo (Join-Path $myDir $name)
+        $lines += Format-FileInfoLines $name $info
+      }
+    }
+
+    if ($downloadedFile) {
+      $lines += ""
+      $lines += "=== Archivo descargado (nueva version) ==="
+      $info = Get-BinaryFileInfo $downloadedFile
+      $lines += Format-FileInfoLines (Split-Path -Leaf $downloadedFile) $info
+    }
+
+    $stdout = $lines -join "`n"
     $startedAt = (Get-Date -Format 'yyyy-MM-ddTHH:mm:ss')
     $body = ConvertTo-Json -Compress @{
       agent_id     = $agentId
@@ -3357,13 +3419,13 @@ function Send-UpdateRun([string]$serverUrl, [int]$agentId, [string]$iterationId,
       started_at   = $startedAt
       finished_at  = $startedAt
       exit_code    = 0
-      stdout       = "Actualización de agente iniciada: v$fromVersion → v$toVersion"
+      stdout       = $stdout
       iteration_id = $iterationId
     }
     Invoke-AgentRestMethod -Uri "$serverUrl/api/deployments/runs" -Method Post -Body $body | Out-Null
   } catch {
     if ("$_" -match "^EXIT:\d+$") { throw }
-    Write-Info "  [UPDATE] Error registrando actualización en iteración: $_ (no fatal)"
+    Write-Info "  [UPDATE] Error registrando actualizacion en iteracion: $_ (no fatal)"
   }
 }
 

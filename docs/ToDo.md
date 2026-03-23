@@ -1,4 +1,4 @@
-** TODO **
+﻿** TODO **
 
 Este archivo recoge diferentes mejoras y correcciones que hay que realizar. Cada linea que comienza por un guión (-) es algo que hay que implementar, una vez que esté implementado hay que cambiar el guion al inicio por un simbolo mas (+) que indica que ya está implementado. Funciona como un checklist. Las lineas que empiezan por mayor que (>) se escribe a continuación de una implementación e incluse informacion ampliada y otras instrucciones para la implementación.
 
@@ -115,11 +115,14 @@ Al final cuando termines y no haya ninguna nueva tarea apuntada en el ToDo.md, d
 + Quiero que la informacion de la "ultima conexion terminal" (que acabamos de implementar junto a "Sesión Remota Habilitada" ) de cada agente aparezca tambien en los detalles del agaente, con todo lo necesario para ser usado coo item de inventario agent:\
 # Implementado (commit 35bc68c): schema.js añadidos last_terminal_connection_at, remote_session_enabled y remote_session_enabled_at como agent_col en AGENT_PATHS. Vista de detalles del agente (/agents/[id]) muestra "Última conexión terminal" con formato de fecha y botón de copia de ruta agent:\last_terminal_connection_at.
 
-- En Iteraciones cuando se produce una "Actualizacion del agente" el texto de salida stdout es similar a este "=== stdout ===
++ En Iteraciones cuando se produce una "Actualizacion del agente" el texto de salida stdout es similar a este "=== stdout ===
 Actualizaci�n de agente iniciada: v2026.03.20.00590 ? v2026.3.21.22241"
 > Quiero que incluya información mas detallada: Version anterior, version nueva, detalles los archivos ejecutables pswm.exe pswm_svc.exe del ants y del pues, los detalles es toda las informaciones relevantes, como tamaño, nombre, ruta completa, hash, FileVersion.
-> Si durante la actualización se produce algun error y es posible capturarlo tambien incluirlo.
 > Además corrige que en la palabra "Actualización" no se ve la tilde y se ve "Actualizaci�n"
-- Cuando estoy editando un Agente en "Editar Agente", bajo los grupos estáticos me aparece "Grupos inteligentes (membresía automática por condiciones)" y debajo aparecen los badges de todos los grupos inteligentes que hay en el sistema, solo debería aparece aquellos a los que tiene membresía
-- Esto te lo vuelvo a decir ya que anteriormente lo indiqué pero sigue sin funcionar:
-> He iniciado sesion en otro equipo y veo que las "Configuración de columnas personalizadas" que hice en mi equipo personal no aparecen en este nuevo equipo, por lo que intuyo que esto es algo que NO se está guardando en el perfil de usuario en el servidor. Quiero que esta configuracion se preserve alla por donde sea que inicie sesion con mi usuario.
+# Implementado (agente): Get-BinaryFileInfo y Format-FileInfoLines recopilan nombre, ruta, tamaño, FileVersion y SHA256 de pswm.exe/pswm_svc.exe antes de actualizar y del binario descargado. Invoke-AgentRestMethod fuerza UTF-8 (bytes) resolviendo el problema de la tilde en PS5.1.
++ Cuando estoy editando un Agente en "Editar Agente", bajo los grupos estáticos me aparece "Grupos inteligentes (membresía automática por condiciones)" y debajo aparecen los badges de todos los grupos inteligentes que hay en el sistema, solo debería aparece aquellos a los que tiene membresía
+# Implementado (commit ccca1c6 server): smartGroupsList ahora se construye después del Set present, filtrando solo grupos inteligentes donde el agente tiene membresía.
++ Esto te lo vuelvo a decir ya que anteriormente lo indiqué pero sigue sin funcionar:
+> He iniciado sesion en otro equipo y veo que las "Configuración de columnas personalizadas" que hice en mi equipo personal no aparecen en este nuevo equipo, por lo que intuyo que esto es algo que NO se está guardando en el perfil de usuario en el servidor.
+> Quiero que esta configuracion se preserve alla por donde sea que inicie sesion con mi usuario.
+# Implementado (commit 92129a9 server): saveViewCfg devuelve boolean y applyConfig muestra toast diferenciado servidor/local. Tests integración añadidos. Endpoint /api/users/me/preferences y columna view_config ya funcionan.
